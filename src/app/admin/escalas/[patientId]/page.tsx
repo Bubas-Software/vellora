@@ -2,9 +2,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ScheduleCalendar } from "@/components/schedules/ScheduleCalendar";
 import { getPatient, getUserById } from "@/lib/data";
+import { getSession } from "@/lib/auth";
 
 export default async function AdminPatientSchedulePage({ params }: { params: Promise<{ patientId: string }> }) {
   const { patientId } = await params;
+  const session = await getSession();
+  if (!session || (session.role !== "admin" && session.role !== "coordenador_operacional")) notFound();
   const patient = await getPatient(patientId);
   if (!patient) notFound();
 
@@ -23,7 +26,13 @@ export default async function AdminPatientSchedulePage({ params }: { params: Pro
         </p>
         {patient.care_level && <p className="mt-1 text-sm text-[var(--muted-2)]">Plano de cuidado: {patient.care_level}</p>}
       </header>
-      <ScheduleCalendar key={patient.id} mode="admin" patientId={patient.id} patientName={patient.name} />
+      <ScheduleCalendar
+        key={patient.id}
+        mode="admin"
+        patientId={patient.id}
+        patientName={patient.name}
+        canManagePayroll={session.role === "admin"}
+      />
     </div>
   );
 }

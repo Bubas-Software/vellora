@@ -7,6 +7,7 @@ import {
 } from "@/lib/data";
 import { CaregiverProfileDetails } from "@/components/admin/CaregiverProfileDetails";
 import { isValidCaregiverId } from "@/components/admin/caregiver-directory";
+import { getSession } from "@/lib/auth";
 
 export default async function AdminCaregiverProfilePage({
   params,
@@ -26,5 +27,6 @@ export default async function AdminCaregiverProfilePage({
       : listContractDocuments("caregiver_profile", profile.id),
   ]);
 
-  return <CaregiverProfileDetails profile={profile} patients={patients} contracts={contracts} />;
+  const session = await getSession();
+  return <CaregiverProfileDetails profile={profile} patients={patients} contracts={contracts} canDelete={session?.role === "admin"} />;
 }

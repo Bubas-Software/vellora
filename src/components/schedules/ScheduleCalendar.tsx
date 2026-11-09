@@ -6,7 +6,7 @@ import { dateFromKey, dateKey, formatLongDate, formatMonth, formatShiftTime, for
 import { generateScheduleRecurrence, type ScheduleRecurrencePattern } from "@/lib/schedule-recurrence";
 
 type CalendarProps =
-  | { mode: "admin"; patientId: string; patientName: string }
+  | { mode: "admin"; patientId: string; patientName: string; canManagePayroll?: boolean }
   | { mode: "professional"; patients: SchedulePatientOption[] };
 
 type ScheduleResponse = { entries?: ScheduleEntry[]; professionals?: ProfessionalOption[]; error?: string };
@@ -17,6 +17,7 @@ type ScheduleDraft = {
   start_time: string;
   end_time: string;
   ends_next_day: boolean;
+  payroll_amount_override: string;
 };
 
 type RecurrenceDraft = {
@@ -84,6 +85,7 @@ export function ScheduleCalendar(props: CalendarProps) {
   const mode = props.mode;
   const patientId = props.mode === "admin" ? props.patientId : undefined;
   const patientName = props.mode === "admin" ? props.patientName : undefined;
+  const canManagePayroll = props.mode === "admin" && props.canManagePayroll === true;
   const patients = props.mode === "professional" ? props.patients : NO_PATIENTS;
   const monthInputId = useId();
   const patientFilterId = useId();
@@ -274,7 +276,7 @@ export function ScheduleCalendar(props: CalendarProps) {
 
   function startCreate() {
     if (!selectedDate) return;
-    setDraft({ caregiver_user_id: "", scheduled_date: selectedDate, start_time: "08:00", end_time: "20:00", ends_next_day: false });
+    setDraft({ caregiver_user_id: "", scheduled_date: selectedDate, start_time: "08:00", end_time: "20:00", ends_next_day: false, payroll_amount_override: "" });
     setRecurrenceEnabled(false);
     setRecurrenceDraft(newRecurrenceDraft(selectedDate));
     setEditingId(null);
@@ -290,6 +292,9 @@ export function ScheduleCalendar(props: CalendarProps) {
       start_time: formatTime(entry.start_time),
       end_time: formatTime(entry.end_time),
       ends_next_day: entry.ends_next_day,
+      payroll_amount_override: entry.payroll_amount_override_cents
+        ? (entry.payroll_amount_override_cents / 100).toFixed(2)
+        : "",
     });
     setRecurrenceEnabled(false);
     setRecurrenceDraft(null);
@@ -353,7 +358,11 @@ export function ScheduleCalendar(props: CalendarProps) {
           dates: recurrenceDraft.dates,
           skip_dates: recurrenceDraft.skip_dates,
         }
-      : { ...payload, scheduled_date: draft.scheduled_date };
+      : {
+          ...payload,
+          scheduled_date: draft.scheduled_date,
+          ...(canManagePayroll ? { payroll_amount_override: draft.payroll_amount_override } : {}),
+        };
 
     setSaving(true);
     try {
@@ -691,6 +700,29 @@ export function ScheduleCalendar(props: CalendarProps) {
                       />
                       O horário termina no dia seguinte
                     </label>
+                    {canManagePayroll && (!recurrenceEnabled || Boolean(editingId)) && (
+                      <label className="block text-sm font-medium text-[var(--foreground)]">
+                        Valor deste plantão, se diferente do padrão da família (R$)
+                        <input
+                          type="number"
+                          min="0.01"
+                          max="1000000"
+                          step="0.01"
+                          inputMode="decimal"
+                          value={draft.payroll_amount_override}
+                          onChange={(event) => setDraft((current) => current
+                            ? { ...current, payroll_amount_override: event.target.value }
+                            : current)}
+                          placeholder="Informe somente se houver exceção"
+                          className="mt-1.5 min-h-11 w-full rounded-xl border border-[var(--border-strong)] bg-white px-3 text-sm sm:max-w-xs"
+                          disabled={saving}
+                          aria-describedby="schedule-payroll-override-help"
+                        />
+                        <span id="schedule-payroll-override-help" className="mt-1.5 block text-xs font-normal text-[var(--muted)]">
+                          Preencha somente se este plantão tiver valor diferente do serviço definido para o paciente na família. Em branco, o valor da família é mantido. A exceção vale só para esta escala e atualiza o Financeiro.
+                        </span>
+                      </label>
+                    )}
                     {!editingId && (
                       <section className="space-y-3 rounded-xl border border-[var(--border)] bg-white p-3 sm:p-4" aria-label="Recorrência do plantão">
                         <label className="flex min-h-11 items-center gap-3 text-sm font-semibold text-[var(--foreground)]">

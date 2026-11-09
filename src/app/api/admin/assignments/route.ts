@@ -5,7 +5,7 @@ import { apiError } from "@/lib/api-error";
 import { AssignmentConflictError } from "@/lib/assignment-errors";
 
 export async function POST(req: NextRequest) {
-  const guard = await requireRole("admin");
+  const guard = await requireRole("admin", "coordenador_operacional");
   if ("error" in guard) return guard.error;
 
   const body = await req.json().catch(() => null);

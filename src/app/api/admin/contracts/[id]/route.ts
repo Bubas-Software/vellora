@@ -4,7 +4,7 @@ import { deleteContractDocument } from "@/lib/data";
 import { apiError } from "@/lib/api-error";
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireRole("admin");
+  const guard = await requireRole("admin", "coordenador_operacional");
   if ("error" in guard) return guard.error;
 
   const { id } = await params;

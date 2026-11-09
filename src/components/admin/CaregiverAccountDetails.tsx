@@ -12,10 +12,12 @@ export function CaregiverAccountDetails({
   caregiver,
   patients,
   contracts,
+  canDelete,
 }: {
   caregiver: CaregiverAccount;
   patients: Patient[];
   contracts: ContractDocument[];
+  canDelete: boolean;
 }) {
   return (
     <div className="max-w-4xl">
@@ -34,12 +36,14 @@ export function CaregiverAccountDetails({
         </div>
         <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
           <Pill value="ativo" />
-          <DeleteButton
-            endpoint={`/api/admin/caregiver-users/${caregiver.id}`}
-            redirectTo="/admin/cuidadores"
-            confirmText={`Excluir o cadastro de ${caregiver.name}? O acesso será encerrado, vínculos ativos serão removidos e os registros históricos serão preservados sem os dados pessoais.`}
-            label="Excluir profissional"
-          />
+          {canDelete ? (
+            <DeleteButton
+              endpoint={`/api/admin/caregiver-users/${caregiver.id}`}
+              redirectTo="/admin/cuidadores"
+              confirmText={`Excluir o cadastro de ${caregiver.name}? O acesso será encerrado, vínculos ativos serão removidos e os registros históricos serão preservados sem os dados pessoais.`}
+              label="Excluir profissional"
+            />
+          ) : null}
         </div>
       </div>
 

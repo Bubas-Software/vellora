@@ -13,9 +13,12 @@ import { AssignmentsManager } from "@/components/admin/AssignmentsManager";
 import { RecordCard } from "@/components/RecordCard";
 import { Card } from "@/components/ui/Card";
 import { DeleteButton } from "@/components/admin/DeleteButton";
+import { getSession } from "@/lib/auth";
 
 export default async function AdminPatientDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const session = await getSession();
+  const isAdmin = session?.role === "admin";
   const patient = await getPatient(id);
   if (!patient) notFound();
 
@@ -38,12 +41,14 @@ export default async function AdminPatientDetailPage({ params }: { params: Promi
       </Link>
       <div className="mt-4 mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h2 className="text-lg font-semibold text-[var(--foreground)]">{patient.name}</h2>
-        <DeleteButton
-          endpoint={`/api/admin/patients/${patient.id}`}
-          redirectTo="/admin/pacientes"
-          label="Excluir paciente"
-          confirmText={`Excluir ${patient.name}? Os vínculos com cuidadores e os registros diários desse paciente também serão apagados. A conta da família será preservada.`}
-        />
+        {isAdmin ? (
+          <DeleteButton
+            endpoint={`/api/admin/patients/${patient.id}`}
+            redirectTo="/admin/pacientes"
+            label="Excluir paciente"
+            confirmText={`Excluir ${patient.name}? Os vínculos com cuidadores e os registros diários desse paciente também serão apagados. A conta da família será preservada.`}
+          />
+        ) : null}
       </div>
 
       <div className="grid lg:grid-cols-2 gap-6">
@@ -67,7 +72,7 @@ export default async function AdminPatientDetailPage({ params }: { params: Promi
             record={r}
             caregiverName={namesMap[r.caregiver_user_id] || "Cuidador"}
             editHref={`/admin/pacientes/${patient.id}/registros/${r.id}`}
-            deleteEndpoint={`/api/admin/patients/${patient.id}/records/${r.id}`}
+            deleteEndpoint={isAdmin ? `/api/admin/patients/${patient.id}/records/${r.id}` : undefined}
             deleteConfirmText={`Excluir o registro de ${r.record_date}? Todas as alterações desse registro também serão removidas do histórico.`}
           />
         ))}

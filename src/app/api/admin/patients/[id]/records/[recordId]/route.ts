@@ -12,7 +12,7 @@ import {
 type RouteParams = { params: Promise<{ id: string; recordId: string }> };
 
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
-  const guard = await requireRole("admin");
+  const guard = await requireRole("admin", "coordenador_operacional");
   if ("error" in guard) return guard.error;
 
   const { id: patientId, recordId } = await params;

@@ -1,5 +1,7 @@
 import { ProjectionDashboard } from "@/components/admin/ProjectionDashboard";
 import { getActivePatientCount, getFinanceDashboardSnapshot } from "@/lib/data";
+import { notFound } from "next/navigation";
+import { getSession } from "@/lib/auth";
 
 function currentMonthInSaoPaulo(): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -12,6 +14,8 @@ function currentMonthInSaoPaulo(): string {
 }
 
 export default async function AdminProjectionsPage() {
+  const session = await getSession();
+  if (session?.role !== "admin") notFound();
   const initialMonth = currentMonthInSaoPaulo();
   const [activePatients, finance] = await Promise.all([
     getActivePatientCount(),

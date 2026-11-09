@@ -30,6 +30,7 @@ import type {
   FinanceReceiptMovement,
   FamilyPatientServiceRate,
   FamilyPatientServiceRateInput,
+  FamilyContractedService,
   FamilyUserUpdate,
   Lead,
   Patient,
@@ -83,7 +84,7 @@ export function getDataProvider(): DataProvider {
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const ROLE_VALUES = new Set<User["role"]>(["admin", "familia", "cuidador"]);
+const ROLE_VALUES = new Set<User["role"]>(["admin", "coordenador_operacional", "familia", "cuidador"]);
 const PROFESSIONAL_STATUS_VALUES = new Set<ProfessionalApplication["status"]>([
   "novo",
   "em_analise",
@@ -412,6 +413,8 @@ function mapCaregiverScheduleEntry(
     end_time: normalizeTime(asString(row.end_time)) || "",
     ends_next_day: asBoolean(row.ends_next_day),
     profession: asProfession(row.profession),
+    payroll_amount_override_cents:
+      typeof row.payroll_amount_override_cents === "number" ? row.payroll_amount_override_cents : null,
     payroll_rate_status: row.payroll_rate_status === "gerado" ? "gerado" : "valor_pendente",
     created_at: asString(row.created_at),
     updated_at: asString(row.updated_at),
@@ -754,10 +757,10 @@ export async function getUsersByIds(ids: string[]): Promise<User[]> {
     .map((row) => mapProfile(row.profile, row.authUser));
 }
 
-export async function listUsersByRole(role: string): Promise<User[]> {
+export async function listUsersByRole(role: string, includeInactive = false): Promise<User[]> {
   const normalizedRole = asRole(role.trim().toLowerCase());
   const rows = (await profilesWithAuth()).filter(
-    ({ profile }) => asBoolean(profile.active) && profile.role === normalizedRole,
+    ({ profile }) => (includeInactive || asBoolean(profile.active)) && profile.role === normalizedRole,
   );
   return rows.sort((a, b) => asString(a.profile.name).localeCompare(asString(b.profile.name)))
     .map((row) => mapProfile(row.profile, row.authUser));
@@ -771,6 +774,19 @@ export async function createUser(input: {
   phone?: string;
 }): Promise<User> {
   return createAuthProfile(serviceClient(), input);
+}
+
+export async function setCoordinatorAccountActive(id: string, active: boolean): Promise<void> {
+  const client = serviceClient();
+  const { data, error } = await client
+    .from("profiles")
+    .update({ active, updated_at: new Date().toISOString() })
+    .eq("id", assertUuid(id, "Conta operacional"))
+    .eq("role", "coordenador_operacional")
+    .select("id")
+    .maybeSingle();
+  requireNoError("Não foi possível atualizar acesso da coordenação", error);
+  if (!data) throw new SupabaseDataError("Conta de coordenação operacional não encontrada.");
 }
 
 export async function createManualCaregiver(input: {
@@ -897,6 +913,18 @@ export async function listFamilyPatientServiceRates(familyUserId: string): Promi
     .order("valid_from", { ascending: false });
   requireNoError("Não foi possível listar os valores dos serviços da família", error);
   return ((data || []) as SupabaseRow[]).map(mapFamilyPatientServiceRate);
+}
+
+export async function listFamilyContractedServices(familyUserId: string): Promise<FamilyContractedService[]> {
+  const client = await requestClient();
+  const { data, error } = await client.rpc("list_family_contracted_services", {
+    p_family_user_id: assertUuid(familyUserId, "Família"),
+  });
+  requireNoError("Não foi possível listar os serviços contratados da família", error);
+  return ((data || []) as SupabaseRow[]).map((row) => ({
+    patient_id: assertUuid(asString(row.patient_id), "Paciente"),
+    profession: asProfession(row.profession),
+  }));
 }
 
 export async function saveFamilyPatientServiceRates(input: FamilyPatientServiceRateInput): Promise<void> {
@@ -1135,6 +1163,39 @@ export async function isCaregiverAssignedToPatient(caregiverUserId: string, pati
 }
 
 // ---------- Caregiver schedules ----------
+const SCHEDULE_SAFE_COLUMNS = "id, caregiver_assignment_id, scheduled_date, start_time, end_time, ends_next_day, profession, created_by, updated_by, created_at, updated_at";
+
+async function includeSchedulePayrollDetails(
+  client: SupabaseClient,
+  rows: SupabaseRow[],
+): Promise<SupabaseRow[]> {
+  if (!rows.length) return rows;
+  const { data: authData, error: authError } = await client.auth.getUser();
+  requireNoError("Não foi possível validar o acesso à escala", authError);
+  if (!authData.user) return rows;
+  const { data: profile, error: profileError } = await client
+    .from("profiles")
+    .select("role")
+    .eq("id", authData.user.id)
+    .maybeSingle();
+  requireNoError("Não foi possível validar o perfil de acesso à escala", profileError);
+  if (profile?.role !== "admin") return rows;
+
+  const { data, error } = await client.rpc("get_schedule_payroll_details", {
+    p_schedule_entry_ids: rows.map((row) => assertUuid(asString(row.id), "Escala")),
+  });
+  requireNoError("Não foi possível consultar os valores de pagamento da escala", error);
+  const payrollById = new Map(((data || []) as SupabaseRow[]).map((row) => [asString(row.schedule_entry_id), row]));
+  return rows.map((row) => {
+    const payroll = payrollById.get(asString(row.id));
+    return payroll ? {
+      ...row,
+      payroll_amount_override_cents: payroll.payroll_amount_override_cents,
+      payroll_rate_status: payroll.payroll_rate_status,
+    } : row;
+  });
+}
+
 async function scheduleRowsForAssignments(
   assignments: Assignment[],
   startDate: string,
@@ -1145,14 +1206,15 @@ async function scheduleRowsForAssignments(
   const assignmentById = new Map(assignments.map((assignment) => [assignment.id, assignment]));
   const { data, error } = await client
     .from("caregiver_schedule_entries")
-    .select("*")
+    .select(SCHEDULE_SAFE_COLUMNS)
     .in("caregiver_assignment_id", assignments.map((assignment) => assignment.id))
     .gte("scheduled_date", startDate)
     .lt("scheduled_date", endDateExclusive)
     .order("scheduled_date")
     .order("start_time");
   requireNoError("Não foi possível consultar escalas Supabase", error);
-  return ((data || []) as SupabaseRow[]).flatMap((row) => {
+  const rows = await includeSchedulePayrollDetails(client, (data || []) as SupabaseRow[]);
+  return rows.flatMap((row) => {
     const assignmentId = asString(row.caregiver_assignment_id);
     const assignment = assignmentById.get(assignmentId);
     return assignment ? [mapCaregiverScheduleEntry(row, assignment)] : [];
@@ -1203,13 +1265,13 @@ export async function getCaregiverScheduleEntry(id: string): Promise<CaregiverSc
   const scheduleId = assertUuid(id, "Escala");
   const { data, error } = await client
     .from("caregiver_schedule_entries")
-    .select("*")
+    .select(SCHEDULE_SAFE_COLUMNS)
     .eq("id", scheduleId)
     .maybeSingle();
   requireNoError("Não foi possível consultar escala Supabase", error);
   if (!data) return undefined;
 
-  const row = data as SupabaseRow;
+  const [row] = await includeSchedulePayrollDetails(client, [data as SupabaseRow]);
   const assignmentId = assertUuid(asString(row.caregiver_assignment_id), "Vínculo da escala");
   const { data: assignmentData, error: assignmentError } = await client
     .from("caregiver_assignments")
@@ -1227,21 +1289,29 @@ export async function createCaregiverScheduleEntry(
   actorUserId: string,
 ): Promise<CaregiverScheduleEntry> {
   const client = await requestClient();
+  const insertValues: SupabaseRow = {
+    caregiver_assignment_id: assertUuid(input.caregiver_assignment_id, "Vínculo da escala"),
+    scheduled_date: input.scheduled_date,
+    start_time: input.start_time,
+    end_time: input.end_time,
+    ends_next_day: input.ends_next_day,
+    profession: input.profession,
+    created_by: assertUuid(actorUserId, "Administrador"),
+    updated_by: assertUuid(actorUserId, "Administrador"),
+  };
   const { data, error } = await client
     .from("caregiver_schedule_entries")
-    .insert({
-      caregiver_assignment_id: assertUuid(input.caregiver_assignment_id, "Vínculo da escala"),
-      scheduled_date: input.scheduled_date,
-      start_time: input.start_time,
-      end_time: input.end_time,
-      ends_next_day: input.ends_next_day,
-      profession: input.profession,
-      created_by: assertUuid(actorUserId, "Administrador"),
-      updated_by: assertUuid(actorUserId, "Administrador"),
-    })
+    .insert(insertValues)
     .select("id")
     .single();
   const created = requireValue("Não foi possível criar escala Supabase", data as SupabaseRow | null, error);
+  if (input.payroll_amount_override_cents !== undefined) {
+    const { error: payrollError } = await client.rpc("set_schedule_payroll_override", {
+      p_schedule_entry_id: assertUuid(asString(created.id), "Escala"),
+      p_amount_cents: input.payroll_amount_override_cents,
+    });
+    requireNoError("Não foi possível salvar o valor excepcional do plantão", payrollError);
+  }
   const schedule = await getCaregiverScheduleEntry(asString(created.id));
   if (!schedule) throw new SupabaseDataError("Não foi possível confirmar a escala criada.");
   return schedule;
@@ -1291,6 +1361,13 @@ export async function updateCaregiverScheduleEntry(
     })
     .eq("id", assertUuid(id, "Escala"));
   requireNoError("Não foi possível atualizar escala Supabase", error);
+  if (input.payroll_amount_override_cents !== undefined) {
+    const { error: payrollError } = await client.rpc("set_schedule_payroll_override", {
+      p_schedule_entry_id: assertUuid(id, "Escala"),
+      p_amount_cents: input.payroll_amount_override_cents,
+    });
+    requireNoError("Não foi possível atualizar o valor excepcional do plantão", payrollError);
+  }
 }
 
 export async function deleteCaregiverScheduleEntry(id: string): Promise<void> {

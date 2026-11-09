@@ -9,7 +9,7 @@ import {
 import { isScheduleOverlapConflictError, SCHEDULE_OVERLAP_CONFLICT_MESSAGE } from "@/lib/schedule-errors";
 
 export async function POST(request: NextRequest) {
-  const guard = await requireRole("admin");
+  const guard = await requireRole("admin", "coordenador_operacional");
   if ("error" in guard) return guard.error;
 
   const parsed = parseRecurringScheduleMutation(await request.json().catch(() => null));

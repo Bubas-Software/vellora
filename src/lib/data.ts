@@ -27,7 +27,7 @@ export type User = {
   name: string;
   email: string;
   password_hash: string;
-  role: "admin" | "familia" | "cuidador";
+  role: "admin" | "coordenador_operacional" | "familia" | "cuidador";
   phone: string | null;
   session_version: number;
   deleted_at: string | null;
@@ -81,6 +81,8 @@ export type FamilyPatientServiceRateInput = {
   }>;
 };
 
+export type FamilyContractedService = Pick<FamilyPatientServiceRate, "patient_id" | "profession">;
+
 export type CaregiverScheduleEntry = {
   id: string;
   caregiver_assignment_id: string;
@@ -91,6 +93,7 @@ export type CaregiverScheduleEntry = {
   end_time: string;
   ends_next_day: boolean;
   profession: ProfessionalApplication["profession"];
+  payroll_amount_override_cents?: number | null;
   payroll_rate_status?: PayrollRateStatus;
   created_at: string;
   updated_at: string;
@@ -103,6 +106,7 @@ export type CaregiverScheduleEntryInput = {
   end_time: string;
   ends_next_day: boolean;
   profession: ProfessionalApplication["profession"];
+  payroll_amount_override_cents?: number | null;
 };
 
 export type Lead = {
@@ -403,16 +407,19 @@ export async function getUsersByIds(ids: string[]): Promise<User[]> {
   return query<User>(`SELECT * FROM users WHERE id IN (${placeholders})`, ids);
 }
 
-export async function listUsersByRole(role: string): Promise<User[]> {
-  if (shouldUseSupabaseData()) return supabaseData.listUsersByRole(role);
-  return query<User>("SELECT * FROM users WHERE role = $1 AND deleted_at IS NULL ORDER BY name", [role]);
+export async function listUsersByRole(role: string, includeInactive = false): Promise<User[]> {
+  if (shouldUseSupabaseData()) return supabaseData.listUsersByRole(role, includeInactive);
+  return query<User>(
+    `SELECT * FROM users WHERE role = $1 ${includeInactive ? "" : "AND deleted_at IS NULL"} ORDER BY name`,
+    [role],
+  );
 }
 
 export async function createUser(input: {
   name: string;
   email: string;
   password: string;
-  role: "admin" | "familia" | "cuidador";
+  role: "admin" | "coordenador_operacional" | "familia" | "cuidador";
   phone?: string;
 }): Promise<User> {
   if (shouldUseSupabaseData()) return supabaseData.createUser(input);
@@ -422,6 +429,17 @@ export async function createUser(input: {
     [id, input.name, input.email.toLowerCase().trim(), hashPassword(input.password), input.role, input.phone || null]
   );
   return (await getUserById(id))!;
+}
+
+export async function setCoordinatorAccountActive(id: string, active: boolean): Promise<void> {
+  if (shouldUseSupabaseData()) return supabaseData.setCoordinatorAccountActive(id, active);
+  await query(
+    `UPDATE users
+     SET deleted_at = ${active ? "NULL" : "CURRENT_TIMESTAMP"},
+         session_version = session_version + 1
+     WHERE id = $1 AND role = 'coordenador_operacional'`,
+    [id],
+  );
 }
 
 export async function createManualCaregiver(input: {
@@ -518,6 +536,19 @@ export async function listFamilyPatientServiceRates(familyUserId: string): Promi
      WHERE family_user_id = $1
      ORDER BY patient_id, profession, valid_from DESC`,
     [familyUserId],
+  );
+}
+
+export async function listFamilyContractedServices(familyUserId: string): Promise<FamilyContractedService[]> {
+  if (shouldUseSupabaseData()) return supabaseData.listFamilyContractedServices(familyUserId);
+  const today = brazilToday();
+  return query<FamilyContractedService>(
+    `SELECT DISTINCT patient_id, profession
+     FROM family_patient_service_rates
+     WHERE family_user_id = $1 AND valid_from <= $2
+       AND (valid_to IS NULL OR valid_to >= $2)
+     ORDER BY patient_id, profession`,
+    [familyUserId, today],
   );
 }
 
@@ -763,7 +794,7 @@ export async function listCaregiverScheduleEntriesForPatient(
   return query<CaregiverScheduleEntry>(
     `SELECT s.id, s.caregiver_assignment_id, a.patient_id, a.caregiver_user_id,
             s.scheduled_date, s.start_time, s.end_time, s.ends_next_day,
-            s.profession, s.payroll_rate_status, s.created_at, s.updated_at
+            s.profession, s.payroll_amount_override_cents, s.payroll_rate_status, s.created_at, s.updated_at
      FROM caregiver_schedule_entries s
      JOIN caregiver_assignments a ON a.id = s.caregiver_assignment_id
      WHERE a.patient_id = $1 AND s.scheduled_date >= $2 AND s.scheduled_date < $3
@@ -783,7 +814,7 @@ export async function listCaregiverScheduleEntriesForCaregiver(
   return query<CaregiverScheduleEntry>(
     `SELECT s.id, s.caregiver_assignment_id, a.patient_id, a.caregiver_user_id,
             s.scheduled_date, s.start_time, s.end_time, s.ends_next_day,
-            s.profession, s.payroll_rate_status, s.created_at, s.updated_at
+            s.profession, s.payroll_amount_override_cents, s.payroll_rate_status, s.created_at, s.updated_at
      FROM caregiver_schedule_entries s
      JOIN caregiver_assignments a ON a.id = s.caregiver_assignment_id
      WHERE a.caregiver_user_id = $1 AND a.active = 1
@@ -804,7 +835,7 @@ export async function listCaregiverScheduleEntriesForProfessional(
   return query<CaregiverScheduleEntry>(
     `SELECT s.id, s.caregiver_assignment_id, a.patient_id, a.caregiver_user_id,
             s.scheduled_date, s.start_time, s.end_time, s.ends_next_day,
-            s.profession, s.payroll_rate_status, s.created_at, s.updated_at
+            s.profession, s.payroll_amount_override_cents, s.payroll_rate_status, s.created_at, s.updated_at
      FROM caregiver_schedule_entries s
      JOIN caregiver_assignments a ON a.id = s.caregiver_assignment_id
      WHERE a.caregiver_user_id = $1
@@ -819,7 +850,7 @@ export async function getCaregiverScheduleEntry(id: string): Promise<CaregiverSc
   return queryOne<CaregiverScheduleEntry>(
     `SELECT s.id, s.caregiver_assignment_id, a.patient_id, a.caregiver_user_id,
             s.scheduled_date, s.start_time, s.end_time, s.ends_next_day,
-            s.profession, s.payroll_rate_status, s.created_at, s.updated_at
+            s.profession, s.payroll_amount_override_cents, s.payroll_rate_status, s.created_at, s.updated_at
      FROM caregiver_schedule_entries s
      JOIN caregiver_assignments a ON a.id = s.caregiver_assignment_id
      WHERE s.id = $1`,
@@ -833,22 +864,25 @@ export async function createCaregiverScheduleEntry(
 ): Promise<CaregiverScheduleEntry> {
   if (shouldUseSupabaseData()) return supabaseData.createCaregiverScheduleEntry(input, actorUserId);
   const id = randomUUID();
-  await query(
-    `INSERT INTO caregiver_schedule_entries
-       (id, caregiver_assignment_id, scheduled_date, start_time, end_time,
-        ends_next_day, profession, created_by, updated_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)`,
-    [
-      id,
-      input.caregiver_assignment_id,
-      input.scheduled_date,
-      input.start_time,
-      input.end_time,
-      input.ends_next_day,
-      input.profession,
-      actorUserId,
-    ],
-  );
+  if (input.payroll_amount_override_cents !== undefined) {
+    await query(
+      `INSERT INTO caregiver_schedule_entries
+         (id, caregiver_assignment_id, scheduled_date, start_time, end_time,
+          ends_next_day, profession, payroll_amount_override_cents, created_by, updated_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)`,
+      [id, input.caregiver_assignment_id, input.scheduled_date, input.start_time, input.end_time,
+        input.ends_next_day, input.profession, input.payroll_amount_override_cents, actorUserId],
+    );
+  } else {
+    await query(
+      `INSERT INTO caregiver_schedule_entries
+         (id, caregiver_assignment_id, scheduled_date, start_time, end_time,
+          ends_next_day, profession, created_by, updated_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)`,
+      [id, input.caregiver_assignment_id, input.scheduled_date, input.start_time, input.end_time,
+        input.ends_next_day, input.profession, actorUserId],
+    );
+  }
   const created = await getCaregiverScheduleEntry(id);
   if (!created) throw new Error("Não foi possível confirmar a escala criada.");
   await syncLegacyCaregiverPayroll([id]);
@@ -893,23 +927,28 @@ export async function updateCaregiverScheduleEntry(
   actorUserId: string,
 ): Promise<void> {
   if (shouldUseSupabaseData()) return supabaseData.updateCaregiverScheduleEntry(id, input, actorUserId);
-  await query(
-    `UPDATE caregiver_schedule_entries
-     SET caregiver_assignment_id = $1, scheduled_date = $2, start_time = $3,
-         end_time = $4, ends_next_day = $5, profession = $6,
-         updated_by = $7, updated_at = CURRENT_TIMESTAMP
-     WHERE id = $8`,
-    [
-      input.caregiver_assignment_id,
-      input.scheduled_date,
-      input.start_time,
-      input.end_time,
-      input.ends_next_day,
-      input.profession,
-      actorUserId,
-      id,
-    ],
-  );
+  if (input.payroll_amount_override_cents !== undefined) {
+    await query(
+      `UPDATE caregiver_schedule_entries
+       SET caregiver_assignment_id = $1, scheduled_date = $2, start_time = $3,
+           end_time = $4, ends_next_day = $5, profession = $6,
+           payroll_amount_override_cents = $7,
+           updated_by = $8, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $9`,
+      [input.caregiver_assignment_id, input.scheduled_date, input.start_time, input.end_time,
+        input.ends_next_day, input.profession, input.payroll_amount_override_cents, actorUserId, id],
+    );
+  } else {
+    await query(
+      `UPDATE caregiver_schedule_entries
+       SET caregiver_assignment_id = $1, scheduled_date = $2, start_time = $3,
+           end_time = $4, ends_next_day = $5, profession = $6,
+           updated_by = $7, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $8`,
+      [input.caregiver_assignment_id, input.scheduled_date, input.start_time, input.end_time,
+        input.ends_next_day, input.profession, actorUserId, id],
+    );
+  }
   await syncLegacyCaregiverPayroll([id]);
 }
 
@@ -946,7 +985,7 @@ async function syncLegacyCaregiverPayroll(scheduleIds: string[]): Promise<void> 
     `SELECT entry.id, entry.scheduled_date, entry.profession,
             assignment.caregiver_user_id, caregiver.name AS caregiver_name,
             patient.name AS patient_name, entry.created_by,
-            (SELECT rate.amount_cents
+            coalesce(entry.payroll_amount_override_cents, (SELECT rate.amount_cents
              FROM family_patient_service_rates AS rate
              JOIN patients AS patient ON patient.id = rate.patient_id
              WHERE rate.patient_id = assignment.patient_id
@@ -954,7 +993,7 @@ async function syncLegacyCaregiverPayroll(scheduleIds: string[]): Promise<void> 
                AND rate.profession = entry.profession
                AND entry.scheduled_date >= rate.valid_from
                AND (rate.valid_to IS NULL OR entry.scheduled_date <= rate.valid_to)
-             ORDER BY rate.valid_from DESC LIMIT 1) AS amount_cents
+             ORDER BY rate.valid_from DESC LIMIT 1)) AS amount_cents
      FROM caregiver_schedule_entries AS entry
      JOIN caregiver_assignments AS assignment ON assignment.id = entry.caregiver_assignment_id
      JOIN patients AS patient ON patient.id = assignment.patient_id

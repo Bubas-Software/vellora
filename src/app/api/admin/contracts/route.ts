@@ -12,7 +12,7 @@ const MAX_FILE_SIZE = 4 * 1024 * 1024;
 const OWNER_TYPES: ContractOwnerType[] = ["family", "caregiver_profile", "caregiver_user"];
 
 export async function POST(req: NextRequest) {
-  const guard = await requireRole("admin");
+  const guard = await requireRole("admin", "coordenador_operacional");
   if ("error" in guard) return guard.error;
 
   const formData = await req.formData().catch(() => null);

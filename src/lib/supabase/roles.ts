@@ -13,7 +13,7 @@ export type SupabaseAuthUser = {
 
 export function mapSupabaseRole(value: unknown): Role | null {
   const role = typeof value === "string" ? value.trim().toLowerCase() : "";
-  if (role === "admin" || role === "familia" || role === "cuidador") return role;
+  if (role === "admin" || role === "coordenador_operacional" || role === "familia" || role === "cuidador") return role;
   return null;
 }
 

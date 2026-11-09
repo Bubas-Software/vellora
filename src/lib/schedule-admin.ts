@@ -24,6 +24,7 @@ export type ScheduleMutation = {
   start_time: string;
   end_time: string;
   ends_next_day: boolean;
+  payroll_amount_override_cents?: number | null;
 };
 
 export type RecurringScheduleMutation = {
@@ -37,7 +38,28 @@ export type RecurringScheduleMutation = {
   dates: string[];
 };
 
-export function parseScheduleMutation(value: unknown): { data?: ScheduleMutation; error?: string } {
+function parsePayrollAmountOverride(
+  value: unknown,
+): { value: number | null; error?: never } | { value?: never; error: string } {
+  if (value === undefined || value === null || (typeof value === "string" && !value.trim())) {
+    return { value: null };
+  }
+  if (typeof value !== "string" && typeof value !== "number") {
+    return { error: "Informe um valor excepcional válido ou deixe o campo vazio para usar a tarifa da família." };
+  }
+  const raw = String(value).trim().replace(",", ".");
+  const match = /^(\d{1,7})(?:\.(\d{1,2}))?$/.exec(raw);
+  if (!match) {
+    return { error: "Informe um valor excepcional válido ou deixe o campo vazio para usar a tarifa da família." };
+  }
+  const amountCents = Number(match[1]) * 100 + Number((match[2] || "").padEnd(2, "0"));
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > 100_000_000) {
+    return { error: "O valor excepcional deve ser maior que zero e não pode passar de R$ 1.000.000,00." };
+  }
+  return { value: amountCents };
+}
+
+export function parseScheduleMutation(value: unknown, allowPayrollOverride = true): { data?: ScheduleMutation; error?: string } {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { error: "Revise os dados da escala e tente novamente." };
   }
@@ -48,6 +70,13 @@ export function parseScheduleMutation(value: unknown): { data?: ScheduleMutation
   const startTime = body.start_time;
   const endTime = body.end_time;
   const endsNextDay = body.ends_next_day;
+  const rawPayrollOverride = body.payroll_amount_override;
+  if (!allowPayrollOverride && rawPayrollOverride !== undefined && rawPayrollOverride !== null && String(rawPayrollOverride).trim()) {
+    return { error: "Somente o Administrador pode definir o valor excepcional do plantão." };
+  }
+  const payrollAmountOverride = allowPayrollOverride
+    ? parsePayrollAmountOverride(rawPayrollOverride)
+    : { value: null };
 
   if (!UUID_PATTERN.test(patientId) || !UUID_PATTERN.test(caregiverUserId)) {
     return { error: "Selecione um paciente e um profissional válidos." };
@@ -66,6 +95,7 @@ export function parseScheduleMutation(value: unknown): { data?: ScheduleMutation
         : "O horário final deve ser posterior ao horário inicial. Marque a opção de término no dia seguinte para plantões noturnos.",
     };
   }
+  if ("error" in payrollAmountOverride) return { error: payrollAmountOverride.error };
   return {
     data: {
       patient_id: patientId,
@@ -74,6 +104,7 @@ export function parseScheduleMutation(value: unknown): { data?: ScheduleMutation
       start_time: startTime,
       end_time: endTime,
       ends_next_day: endsNextDay,
+      ...(allowPayrollOverride ? { payroll_amount_override_cents: payrollAmountOverride.value ?? null } : {}),
     },
   };
 }
@@ -187,6 +218,9 @@ export async function resolveScheduleMutation(
       end_time: mutation.end_time,
       ends_next_day: mutation.ends_next_day,
       profession: caregiverProfile?.profession || existing?.profession || "cuidador",
+      ...(mutation.payroll_amount_override_cents !== undefined
+        ? { payroll_amount_override_cents: mutation.payroll_amount_override_cents }
+        : {}),
     },
   };
 }

@@ -16,7 +16,7 @@ export const users = sqliteTable(
     name: text("name").notNull(),
     email: text("email").notNull(),
     password_hash: text("password_hash").notNull(),
-    role: text("role", { enum: ["admin", "familia", "cuidador"] }).notNull(),
+    role: text("role", { enum: ["admin", "coordenador_operacional", "familia", "cuidador"] }).notNull(),
     phone: text("phone"),
     session_version: integer("session_version").notNull().default(1),
     deleted_at: text("deleted_at"),
@@ -24,7 +24,7 @@ export const users = sqliteTable(
   },
   (table) => [
     uniqueIndex("users_email_unique").on(table.email),
-    check("users_role_check", sql`${table.role} IN ('admin','familia','cuidador')`),
+    check("users_role_check", sql`${table.role} IN ('admin','coordenador_operacional','familia','cuidador')`),
   ]
 );
 
@@ -105,6 +105,7 @@ export const caregiverScheduleEntries = sqliteTable(
     profession: text("profession", {
       enum: ["cuidador", "tecnico_enfermagem", "enfermeiro", "outros"],
     }).notNull(),
+    payroll_amount_override_cents: integer("payroll_amount_override_cents"),
     payroll_rate_status: text("payroll_rate_status", {
       enum: ["valor_pendente", "gerado"],
     })
@@ -129,6 +130,10 @@ export const caregiverScheduleEntries = sqliteTable(
     check(
       "caregiver_schedule_entries_payroll_rate_status_check",
       sql`${table.payroll_rate_status} IN ('valor_pendente','gerado')`,
+    ),
+    check(
+      "caregiver_schedule_entries_payroll_amount_override_range",
+      sql`${table.payroll_amount_override_cents} IS NULL OR ${table.payroll_amount_override_cents} BETWEEN 1 AND 100000000`,
     ),
     check(
       "caregiver_schedule_entries_time_order",

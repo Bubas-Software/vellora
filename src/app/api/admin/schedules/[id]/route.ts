@@ -18,13 +18,13 @@ type RouteContext = { params: Promise<{ id: string }> };
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
-  const guard = await requireRole("admin");
+  const guard = await requireRole("admin", "coordenador_operacional");
   if ("error" in guard) return guard.error;
 
   const { id } = await context.params;
   if (!UUID_PATTERN.test(id)) return NextResponse.json({ error: "Escala inválida." }, { status: 400 });
 
-  const parsed = parseScheduleMutation(await request.json().catch(() => null));
+  const parsed = parseScheduleMutation(await request.json().catch(() => null), guard.session.role === "admin");
   if (!parsed.data) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
   try {
@@ -49,7 +49,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 }
 
 export async function DELETE(_request: NextRequest, context: RouteContext) {
-  const guard = await requireRole("admin");
+  const guard = await requireRole("admin", "coordenador_operacional");
   if ("error" in guard) return guard.error;
 
   const { id } = await context.params;

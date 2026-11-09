@@ -8,7 +8,7 @@ import { DUPLICATE_ACCOUNT_EMAIL_MESSAGE, isDuplicateAccountEmailError } from "@
 const VALID_PROFESSIONS = new Set(["cuidador", "tecnico_enfermagem", "enfermeiro", "outros"]);
 
 export async function POST(req: NextRequest) {
-  const guard = await requireRole("admin");
+  const guard = await requireRole("admin", "coordenador_operacional");
   if ("error" in guard) return guard.error;
 
   const body = await req.json().catch(() => null);

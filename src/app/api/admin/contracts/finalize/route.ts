@@ -24,7 +24,7 @@ function isPdfSignature(bytes: Uint8Array): boolean {
 }
 
 export async function POST(request: NextRequest) {
-  const guard = await requireRole("admin");
+  const guard = await requireRole("admin", "coordenador_operacional");
   if ("error" in guard) return guard.error;
   if (resolveStorageProvider(runtimeValue("VELLORA_STORAGE_PROVIDER")) !== "supabase") {
     return NextResponse.json({ error: "Upload direto indisponível.", code: "direct_upload_disabled" }, { status: 404 });

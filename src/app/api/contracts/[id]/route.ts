@@ -15,7 +15,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const contract = await getContractDocument(id);
   if (!contract) return NextResponse.json({ error: "Contrato não encontrado." }, { status: 404 });
 
-  let authorized = session.role === "admin";
+  let authorized = session.role === "admin" || session.role === "coordenador_operacional";
   if (session.role === "familia") {
     authorized = contract.family_user_id === session.userId;
   }

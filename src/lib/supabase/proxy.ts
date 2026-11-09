@@ -1,6 +1,8 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import type { Role } from "../auth";
+import { roleHomePath } from "../auth";
+import { isAdminOnlyPath } from "../permissions";
 import { applySupabaseCookieState, createSupabaseCookieState, createSupabaseRequestClient } from "./server";
 import { getSupabaseProxySession } from "./proxy-session";
 
@@ -13,7 +15,7 @@ function redirectToLogin(request: NextRequest, state: ReturnType<typeof createSu
 
 export async function proxySupabaseAuth(
   request: NextRequest,
-  requiredRole: Role,
+  allowedRoles: readonly Role[],
 ): Promise<NextResponse> {
   const state = createSupabaseCookieState();
 
@@ -22,9 +24,11 @@ export async function proxySupabaseAuth(
     const session = await getSupabaseProxySession(client);
     if (!session) return redirectToLogin(request, state);
 
-    if (session.role !== requiredRole) {
+    const roleAllowed = allowedRoles.includes(session.role)
+      && !(session.role === "coordenador_operacional" && isAdminOnlyPath(request.nextUrl.pathname));
+    if (!roleAllowed) {
       const url = request.nextUrl.clone();
-      url.pathname = session.role === "admin" ? "/admin" : session.role === "familia" ? "/familia" : "/cuidador";
+      url.pathname = roleHomePath(session.role);
       url.search = "";
       return applySupabaseCookieState(NextResponse.redirect(url), state);
     }

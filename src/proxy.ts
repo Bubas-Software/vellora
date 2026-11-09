@@ -2,16 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 import { isSafePreview } from "@/lib/preview";
 import { runtimeValue } from "@/lib/runtime-config";
-import { getAuthProvider, type Role } from "@/lib/auth";
+import { getAuthProvider, type Role, roleHomePath } from "@/lib/auth";
+import { isAdminOnlyPath } from "@/lib/permissions";
 import { proxySupabaseAuth } from "@/lib/supabase/proxy";
 import { enforceAdminMutationSecurity } from "@/lib/request-security";
 
 const SESSION_COOKIE = "vellora_session";
 
-const ROLE_PREFIX: Record<string, Role> = {
-  "/admin": "admin",
-  "/familia": "familia",
-  "/cuidador": "cuidador",
+const ROLE_PREFIX: Record<string, readonly Role[]> = {
+  "/admin": ["admin", "coordenador_operacional"],
+  "/familia": ["familia"],
+  "/cuidador": ["cuidador"],
 };
 
 export async function proxy(req: NextRequest) {
@@ -29,9 +30,9 @@ export async function proxy(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  const requiredRole = ROLE_PREFIX[matchedPrefix];
+  const allowedRoles = ROLE_PREFIX[matchedPrefix];
   if (getAuthProvider() === "supabase") {
-    return proxySupabaseAuth(req, requiredRole);
+    return proxySupabaseAuth(req, allowedRoles);
   }
 
   const token = req.cookies.get(SESSION_COOKIE)?.value;
@@ -49,7 +50,7 @@ export async function proxy(req: NextRequest) {
     if (
       typeof payload.userId !== "string" ||
       typeof payload.sessionVersion !== "number" ||
-      payload.role !== requiredRole
+      typeof payload.role !== "string"
     ) {
       const url = req.nextUrl.clone();
       url.pathname = "/login";
@@ -61,10 +62,22 @@ export async function proxy(req: NextRequest) {
       "SELECT role, session_version FROM users WHERE id = $1 AND deleted_at IS NULL",
       [payload.userId]
     );
-    if (!user || user.role !== requiredRole || user.session_version !== payload.sessionVersion) {
+    const role = user?.role as Role | undefined;
+    const isAllowedRole = role === "admin"
+      ? allowedRoles.includes("admin")
+      : role === "coordenador_operacional"
+        ? allowedRoles.includes("coordenador_operacional") && !isAdminOnlyPath(pathname)
+        : typeof role === "string" && allowedRoles.includes(role as Role);
+    if (!user || user.role !== payload.role || user.session_version !== payload.sessionVersion) {
       const url = req.nextUrl.clone();
       url.pathname = "/login";
       url.searchParams.set("next", pathname);
+      return NextResponse.redirect(url);
+    }
+    if (!isAllowedRole) {
+      const url = req.nextUrl.clone();
+      url.pathname = roleHomePath(role!);
+      url.search = "";
       return NextResponse.redirect(url);
     }
     return NextResponse.next();

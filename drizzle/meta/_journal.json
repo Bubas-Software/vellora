@@ -64,6 +64,20 @@
       "when": 1793395389050,
       "tag": "0008_family_service_rates_monthly",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1793969962798,
+      "tag": "0009_schedule_payroll_amount_override",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1794231524685,
+      "tag": "0010_coordinator_operational_role",
+      "breakpoints": true
     }
   ]
 }

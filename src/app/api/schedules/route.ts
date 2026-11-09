@@ -15,7 +15,7 @@ import { parseScheduleMonth } from "@/lib/schedule-validation";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function GET(request: NextRequest) {
-  const guard = await requireRole("admin", "cuidador");
+  const guard = await requireRole("admin", "coordenador_operacional", "cuidador");
   if ("error" in guard) return guard.error;
 
   const search = request.nextUrl.searchParams;
@@ -39,6 +39,7 @@ export async function GET(request: NextRequest) {
           .map((entry) => {
             const safeEntry = { ...entry };
             delete safeEntry.payroll_rate_status;
+            delete safeEntry.payroll_amount_override_cents;
             return {
               ...safeEntry,
               patient_name: patientNames.get(entry.patient_id) || "Paciente",
@@ -111,8 +112,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       entries: entries.map((entry) => {
         const user = userById.get(entry.caregiver_user_id);
+        const safeEntry = { ...entry };
+        if (guard.session.role === "coordenador_operacional") {
+          delete safeEntry.payroll_rate_status;
+          delete safeEntry.payroll_amount_override_cents;
+        }
         return {
-          ...entry,
+          ...safeEntry,
           professional_name: user?.name || "Profissional",
           professional_phone: user?.phone || null,
         };

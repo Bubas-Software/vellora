@@ -14,7 +14,7 @@ import {
 import { validateContractOwner } from "@/lib/contracts/owner-validation";
 
 export async function POST(request: NextRequest) {
-  const guard = await requireRole("admin");
+  const guard = await requireRole("admin", "coordenador_operacional");
   if ("error" in guard) return guard.error;
 
   if (

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ContractManager } from "@/components/admin/ContractManager";
+import { FamilyContractedServicesSummary } from "@/components/admin/FamilyContractedServicesSummary";
 import { DeleteButton } from "@/components/admin/DeleteButton";
 import { FamilyEditForm } from "@/components/admin/FamilyEditForm";
 import { FamilyPatientServiceRatesManager } from "@/components/admin/FamilyPatientServiceRatesManager";
@@ -9,9 +10,11 @@ import {
   getUserById,
   listContractDocuments,
   listFamilyPatientServiceRates,
+  listFamilyContractedServices,
   listPatientsByFamily,
   type FamilyPatientServiceRate,
 } from "@/lib/data";
+import { getSession } from "@/lib/auth";
 
 function isMissingFamilyServiceRatesTable(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
@@ -25,6 +28,8 @@ function isMissingFamilyServiceRatesTable(error: unknown): boolean {
 
 export default async function AdminFamilyDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const session = await getSession();
+  const isAdmin = session?.role === "admin";
   const family = await getUserById(id);
 
   if (!family || family.role !== "familia" || family.deleted_at) notFound();
@@ -34,12 +39,17 @@ export default async function AdminFamilyDetailPage({ params }: { params: Promis
     listContractDocuments("family", family.id),
   ]);
   let rates: FamilyPatientServiceRate[] = [];
+  let contractedServices: Awaited<ReturnType<typeof listFamilyContractedServices>> = [];
   let serviceRatesAvailable = true;
-  try {
-    rates = await listFamilyPatientServiceRates(family.id);
-  } catch (error) {
-    if (!isMissingFamilyServiceRatesTable(error)) throw error;
-    serviceRatesAvailable = false;
+  if (isAdmin) {
+    try {
+      rates = await listFamilyPatientServiceRates(family.id);
+    } catch (error) {
+      if (!isMissingFamilyServiceRatesTable(error)) throw error;
+      serviceRatesAvailable = false;
+    }
+  } else {
+    contractedServices = await listFamilyContractedServices(family.id);
   }
   const todayParts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Sao_Paulo",
@@ -61,12 +71,14 @@ export default async function AdminFamilyDetailPage({ params }: { params: Promis
           <p className="text-sm text-[var(--muted)]">Detalhe da família</p>
           <h1 className="mt-1 text-2xl font-semibold text-[var(--foreground)]">{family.name}</h1>
         </div>
-        <DeleteButton
-          endpoint={`/api/admin/families/${family.id}`}
-          redirectTo="/admin/familias"
-          label="Excluir família"
-          confirmText={`Excluir a família ${family.name}? A conta será removida, os contratos serão apagados e os pacientes ficarão sem vínculo familiar. Os registros de cuidado serão preservados.`}
-        />
+        {isAdmin ? (
+          <DeleteButton
+            endpoint={`/api/admin/families/${family.id}`}
+            redirectTo="/admin/familias"
+            label="Excluir família"
+            confirmText={`Excluir a família ${family.name}? A conta será removida, os contratos serão apagados e os pacientes ficarão sem vínculo familiar. Os registros de cuidado serão preservados.`}
+          />
+        ) : null}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -109,13 +121,17 @@ export default async function AdminFamilyDetailPage({ params }: { params: Promis
         </Card>
       </div>
 
-      <FamilyPatientServiceRatesManager
-        familyId={family.id}
-        patients={patients}
-        rates={rates}
-        today={today}
-        available={serviceRatesAvailable}
-      />
+      {isAdmin ? (
+        <FamilyPatientServiceRatesManager
+          familyId={family.id}
+          patients={patients}
+          rates={rates}
+          today={today}
+          available={serviceRatesAvailable}
+        />
+      ) : (
+        <FamilyContractedServicesSummary patients={patients} services={contractedServices} />
+      )}
 
       <section className="mt-8">
         <h2 className="mb-3 text-lg font-semibold text-[var(--foreground)]">Contratos</h2>

@@ -4,7 +4,7 @@ import { deleteSupabaseFile } from "@/lib/supabase/storage";
 import { verifyContractUploadTicket } from "@/lib/contracts/direct-upload";
 
 export async function DELETE(request: NextRequest) {
-  const guard = await requireRole("admin");
+  const guard = await requireRole("admin", "coordenador_operacional");
   if ("error" in guard) return guard.error;
 
   let body: Record<string, unknown>;

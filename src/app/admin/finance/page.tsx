@@ -1,4 +1,6 @@
 import { FinanceDashboard } from "@/components/admin/FinanceDashboard";
+import { notFound } from "next/navigation";
+import { getSession } from "@/lib/auth";
 
 function currentFinanceMonth(): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -10,6 +12,8 @@ function currentFinanceMonth(): string {
   return part("year") + "-" + part("month");
 }
 
-export default function AdminFinancePage() {
+export default async function AdminFinancePage() {
+  const session = await getSession();
+  if (session?.role !== "admin") notFound();
   return <FinanceDashboard initialMonth={currentFinanceMonth()} />;
 }

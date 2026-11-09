@@ -1,4 +1,6 @@
 import { PricingCalculator } from "@/components/admin/PricingCalculator";
+import { notFound } from "next/navigation";
+import { getSession } from "@/lib/auth";
 
 function currentMonthInSaoPaulo(): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -10,6 +12,8 @@ function currentMonthInSaoPaulo(): string {
   return part("year") + "-" + part("month");
 }
 
-export default function AdminPricingPage() {
+export default async function AdminPricingPage() {
+  const session = await getSession();
+  if (session?.role !== "admin") notFound();
   return <PricingCalculator initialMonth={currentMonthInSaoPaulo()} />;
 }

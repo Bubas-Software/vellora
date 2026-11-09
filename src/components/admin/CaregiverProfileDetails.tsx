@@ -29,10 +29,12 @@ export function CaregiverProfileDetails({
   profile,
   patients,
   contracts,
+  canDelete,
 }: {
   profile: CaregiverProfile;
   patients: Patient[];
   contracts: ContractDocument[];
+  canDelete: boolean;
 }) {
   const router = useRouter();
   const [accessFormOpen, setAccessFormOpen] = useState(false);
@@ -85,12 +87,14 @@ export function CaregiverProfileDetails({
         </div>
         <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
           <Pill value={profile.account_status} />
-          <DeleteButton
-            endpoint={`/api/admin/caregivers/${profile.id}`}
-            redirectTo="/admin/cuidadores"
-            confirmText={`Excluir o cadastro de ${profile.name}? O acesso será encerrado, vínculos ativos serão removidos e os registros históricos serão preservados sem os dados pessoais do profissional.`}
-            label="Excluir profissional"
-          />
+          {canDelete ? (
+            <DeleteButton
+              endpoint={`/api/admin/caregivers/${profile.id}`}
+              redirectTo="/admin/cuidadores"
+              confirmText={`Excluir o cadastro de ${profile.name}? O acesso será encerrado, vínculos ativos serão removidos e os registros históricos serão preservados sem os dados pessoais do profissional.`}
+              label="Excluir profissional"
+            />
+          ) : null}
         </div>
       </div>
 

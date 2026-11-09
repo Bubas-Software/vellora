@@ -7,6 +7,7 @@ import {
 } from "@/lib/data";
 import { CaregiverAccountDetails } from "@/components/admin/CaregiverAccountDetails";
 import { isValidCaregiverId } from "@/components/admin/caregiver-directory";
+import { getSession } from "@/lib/auth";
 
 export default async function AdminCaregiverAccountPage({
   params,
@@ -29,6 +30,7 @@ export default async function AdminCaregiverAccountPage({
 
   return (
     <CaregiverAccountDetails
+      canDelete={(await getSession())?.role === "admin"}
       caregiver={{
         id: caregiver.id,
         name: caregiver.name,

@@ -5,7 +5,7 @@ import { runtimeValue } from "./runtime-config";
 import { resolveAuthProvider, type AuthProvider } from "./auth-provider";
 import { getSupabaseSession } from "./supabase/auth";
 
-export type Role = "admin" | "familia" | "cuidador";
+export type Role = "admin" | "coordenador_operacional" | "familia" | "cuidador";
 
 export type SessionPayload = {
   userId: string;
@@ -47,7 +47,7 @@ export async function verifySessionToken(token: string): Promise<SessionPayload 
       typeof payload.userId === "string" &&
       typeof payload.name === "string" &&
       typeof payload.sessionVersion === "number" &&
-      (payload.role === "admin" || payload.role === "familia" || payload.role === "cuidador")
+      (payload.role === "admin" || payload.role === "coordenador_operacional" || payload.role === "familia" || payload.role === "cuidador")
     ) {
       return {
         userId: payload.userId,
@@ -91,7 +91,7 @@ async function getLegacySession(): Promise<SessionPayload | null> {
 }
 
 export function roleHomePath(role: Role): string {
-  if (role === "admin") return "/admin";
+  if (role === "admin" || role === "coordenador_operacional") return "/admin";
   if (role === "familia") return "/familia";
   return "/cuidador";
 }
