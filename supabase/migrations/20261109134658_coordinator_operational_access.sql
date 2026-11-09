@@ -458,7 +458,6 @@ using (
 alter function private.sync_caregiver_schedule_payroll(uuid) security definer;
 alter function private.sync_caregiver_schedule_payroll_trigger() security definer;
 alter function private.prevent_paid_caregiver_schedule_change() security definer;
-alter function private.sync_caregiver_profile_payroll() security definer;
 alter function private.prevent_paid_caregiver_assignment_change() security definer;
 alter function private.sync_caregiver_assignment_payroll() security definer;
 alter function private.sync_patient_family_payroll() security definer;
@@ -467,7 +466,6 @@ alter function private.sync_family_patient_service_rate_payroll() security defin
 revoke all on function private.sync_caregiver_schedule_payroll(uuid) from public, anon, authenticated;
 revoke all on function private.sync_caregiver_schedule_payroll_trigger() from public, anon, authenticated;
 revoke all on function private.prevent_paid_caregiver_schedule_change() from public, anon, authenticated;
-revoke all on function private.sync_caregiver_profile_payroll() from public, anon, authenticated;
 revoke all on function private.prevent_paid_caregiver_assignment_change() from public, anon, authenticated;
 revoke all on function private.sync_caregiver_assignment_payroll() from public, anon, authenticated;
 revoke all on function private.sync_patient_family_payroll() from public, anon, authenticated;
@@ -476,7 +474,6 @@ revoke all on function private.sync_family_patient_service_rate_payroll() from p
 grant execute on function private.sync_caregiver_schedule_payroll(uuid) to service_role;
 grant execute on function private.sync_caregiver_schedule_payroll_trigger() to service_role;
 grant execute on function private.prevent_paid_caregiver_schedule_change() to service_role;
-grant execute on function private.sync_caregiver_profile_payroll() to service_role;
 grant execute on function private.prevent_paid_caregiver_assignment_change() to service_role;
 grant execute on function private.sync_caregiver_assignment_payroll() to service_role;
 grant execute on function private.sync_patient_family_payroll() to service_role;
