@@ -5,6 +5,7 @@ import { DashboardShell } from "@/components/DashboardShell";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession();
+  if (session?.roleSelectionRequired) redirect("/selecionar-perfil");
   if (!session || !canAccessAdminArea(session.role)) redirect("/login");
 
   const isAdmin = session.role === "admin";

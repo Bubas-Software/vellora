@@ -15,6 +15,14 @@ export async function requireRole(...roles: Role[]): Promise<{ session: SessionP
   if (!session) {
     return { error: NextResponse.json({ error: "Não autenticado." }, { status: 401 }) };
   }
+  if (session.roleSelectionRequired) {
+    return {
+      error: NextResponse.json(
+        { error: "Escolha um perfil de acesso antes de continuar.", redirect: "/selecionar-perfil" },
+        { status: 409 },
+      ),
+    };
+  }
   if (!roles.includes(session.role)) {
     return { error: NextResponse.json({ error: "Sem permissão." }, { status: 403 }) };
   }

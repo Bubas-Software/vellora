@@ -31,7 +31,12 @@ export function LoginForm({ next }: { next?: string }) {
         setLoading(false);
         return;
       }
-      window.location.assign(safeRedirect(next, safeRedirect(json.redirect, "/")));
+      const choiceQuery = new URLSearchParams();
+      if (typeof next === "string") choiceQuery.set("next", safeRedirect(next, "/"));
+      const redirect = json.needsRoleSelection
+        ? `/selecionar-perfil${choiceQuery.size ? `?${choiceQuery.toString()}` : ""}`
+        : safeRedirect(next, safeRedirect(json.redirect, "/"));
+      window.location.assign(redirect);
     } catch {
       setError("Erro de conexão. Tente novamente.");
       setLoading(false);

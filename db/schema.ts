@@ -3,6 +3,7 @@ import {
   check,
   index,
   integer,
+  primaryKey,
   real,
   sqliteTable,
   text,
@@ -26,6 +27,31 @@ export const users = sqliteTable(
     uniqueIndex("users_email_unique").on(table.email),
     check("users_role_check", sql`${table.role} IN ('admin','coordenador_operacional','familia','cuidador')`),
   ]
+);
+
+export const userRoleMemberships = sqliteTable(
+  "user_role_memberships",
+  {
+    user_id: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["admin", "coordenador_operacional", "familia", "cuidador"] }).notNull(),
+    active: integer("active").notNull().default(1),
+    is_default: integer("is_default").notNull().default(0),
+    granted_by: text("granted_by").references(() => users.id, { onDelete: "set null" }),
+    created_at: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updated_at: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    primaryKey({ columns: [table.user_id, table.role] }),
+    index("idx_user_role_memberships_active").on(table.user_id, table.active),
+    check(
+      "user_role_memberships_role_check",
+      sql`${table.role} IN ('admin','coordenador_operacional','familia','cuidador')`,
+    ),
+    check("user_role_memberships_active_check", sql`${table.active} IN (0,1)`),
+    check("user_role_memberships_default_check", sql`${table.is_default} IN (0,1)`),
+  ],
 );
 
 export const passwordResetTokens = sqliteTable(

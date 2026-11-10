@@ -57,23 +57,35 @@ export async function proxy(req: NextRequest) {
       url.searchParams.set("next", pathname);
       return NextResponse.redirect(url);
     }
-    const { queryOne } = await import("@/lib/db");
+    const { query, queryOne } = await import("@/lib/db");
     const user = await queryOne<{ role: string; session_version: number }>(
       "SELECT role, session_version FROM users WHERE id = $1 AND deleted_at IS NULL",
       [payload.userId]
     );
-    const role = user?.role as Role | undefined;
-    const isAllowedRole = role === "admin"
-      ? allowedRoles.includes("admin")
-      : role === "coordenador_operacional"
-        ? allowedRoles.includes("coordenador_operacional") && !isAdminOnlyPath(pathname)
-        : typeof role === "string" && allowedRoles.includes(role as Role);
-    if (!user || user.role !== payload.role || user.session_version !== payload.sessionVersion) {
+    const memberships = await query<{ role: string }>(
+      "SELECT role FROM user_role_memberships WHERE user_id = $1 AND active = 1",
+      [payload.userId],
+    );
+    const role = payload.role as Role | undefined;
+    const hasActiveRole = typeof role === "string" && memberships.some((membership) => membership.role === role);
+    if (!user || !hasActiveRole || user.session_version !== payload.sessionVersion) {
       const url = req.nextUrl.clone();
       url.pathname = "/login";
       url.searchParams.set("next", pathname);
       return NextResponse.redirect(url);
     }
+    if (memberships.length > 1 && payload.profileSelected !== true) {
+      const url = req.nextUrl.clone();
+      url.pathname = "/selecionar-perfil";
+      url.search = "";
+      url.searchParams.set("next", pathname + req.nextUrl.search);
+      return NextResponse.redirect(url);
+    }
+    const isAllowedRole = role === "admin"
+      ? allowedRoles.includes("admin")
+      : role === "coordenador_operacional"
+        ? allowedRoles.includes("coordenador_operacional") && !isAdminOnlyPath(pathname)
+        : typeof role === "string" && allowedRoles.includes(role as Role);
     if (!isAllowedRole) {
       const url = req.nextUrl.clone();
       url.pathname = roleHomePath(role!);

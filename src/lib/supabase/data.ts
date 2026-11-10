@@ -741,6 +741,16 @@ export async function getUserByEmail(email: string): Promise<User | undefined> {
   return match ? mapProfile(match.profile, match.authUser) : undefined;
 }
 
+export async function findUserByEmailIncludingInactive(email: string): Promise<User | undefined> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return undefined;
+  const rows = await profilesWithAuth();
+  const match = rows.find(
+    ({ authUser }) => authUser?.email?.trim().toLowerCase() === normalized,
+  );
+  return match ? mapProfile(match.profile, match.authUser) : undefined;
+}
+
 export async function getUserById(id: string): Promise<User | undefined> {
   const match = await profileWithAuth(assertUuid(id, "Usuário"));
   return match ? mapProfile(match.profile, match.authUser) : undefined;
@@ -759,11 +769,74 @@ export async function getUsersByIds(ids: string[]): Promise<User[]> {
 
 export async function listUsersByRole(role: string, includeInactive = false): Promise<User[]> {
   const normalizedRole = asRole(role.trim().toLowerCase());
-  const rows = (await profilesWithAuth()).filter(
-    ({ profile }) => (includeInactive || asBoolean(profile.active)) && profile.role === normalizedRole,
+  const client = serviceClient();
+  const { data: membershipRows, error: membershipError } = await client
+    .from("profile_role_memberships")
+    .select("profile_id, active")
+    .eq("role", normalizedRole);
+  requireNoError("Não foi possível consultar vínculos de perfil", membershipError);
+  const membershipById = new Map(
+    ((membershipRows || []) as SupabaseRow[]).map((row) => [
+      asString(row.profile_id),
+      asBoolean(row.active),
+    ]),
   );
-  return rows.sort((a, b) => asString(a.profile.name).localeCompare(asString(b.profile.name)))
-    .map((row) => mapProfile(row.profile, row.authUser));
+  const rows = (await profilesWithAuth()).filter(({ profile }) => {
+    const id = asString(profile.id);
+    return membershipById.has(id)
+      && (includeInactive || (asBoolean(profile.active) && membershipById.get(id) === true));
+  });
+  return rows
+    .sort((a, b) => asString(a.profile.name).localeCompare(asString(b.profile.name)))
+    .map((row) => ({
+      ...mapProfile(row.profile, row.authUser),
+      membership_active: membershipById.get(asString(row.profile.id)) === true,
+    }));
+}
+
+export async function listUserRoles(id: string): Promise<User["role"][]> {
+  const client = serviceClient();
+  const { data, error } = await client
+    .from("profile_role_memberships")
+    .select("role")
+    .eq("profile_id", assertUuid(id, "Perfil"))
+    .eq("active", true)
+    .order("is_default", { ascending: false })
+    .order("role", { ascending: true });
+  requireNoError("Não foi possível consultar os perfis de acesso", error);
+  return ((data || []) as SupabaseRow[]).map((row) => asRole(row.role));
+}
+
+export async function grantCoordinatorRole(id: string, grantedBy: string): Promise<void> {
+  const client = serviceClient();
+  const profileId = assertUuid(id, "Perfil");
+  const actorId = assertUuid(grantedBy, "Administrador");
+  const target = await profileWithAuth(profileId);
+  if (!target) throw new SupabaseDataError("Conta não encontrada.");
+  if (!asBoolean(target.profile.active)) {
+    throw new SupabaseDataError("A conta está inativa. Reative a conta antes de adicionar outro acesso.");
+  }
+  const { data: existingMemberships, error: membershipsError } = await client
+    .from("profile_role_memberships")
+    .select("role")
+    .eq("profile_id", profileId);
+  requireNoError("Não foi possível validar os perfis da conta", membershipsError);
+  const hasAdminRole = asString(target.profile.role) === "admin"
+    || ((existingMemberships || []) as SupabaseRow[]).some((row) => row.role === "admin");
+  if (hasAdminRole) {
+    throw new SupabaseDataError("O acesso de administrador não pode ser combinado com outros perfis.");
+  }
+  const { error } = await client
+    .from("profile_role_memberships")
+    .upsert({
+      profile_id: profileId,
+      role: "coordenador_operacional",
+      active: true,
+      is_default: false,
+      granted_by: actorId,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "profile_id,role" });
+  requireNoError("Não foi possível adicionar o acesso de coordenação", error);
 }
 
 export async function createUser(input: {
@@ -778,12 +851,19 @@ export async function createUser(input: {
 
 export async function setCoordinatorAccountActive(id: string, active: boolean): Promise<void> {
   const client = serviceClient();
+  const profileId = assertUuid(id, "Conta operacional");
+  if (active) {
+    const target = await profileWithAuth(profileId);
+    if (!target || !asBoolean(target.profile.active)) {
+      throw new SupabaseDataError("A conta está inativa globalmente. Reative a conta antes de reativar este perfil.");
+    }
+  }
   const { data, error } = await client
-    .from("profiles")
+    .from("profile_role_memberships")
     .update({ active, updated_at: new Date().toISOString() })
-    .eq("id", assertUuid(id, "Conta operacional"))
+    .eq("profile_id", profileId)
     .eq("role", "coordenador_operacional")
-    .select("id")
+    .select("profile_id")
     .maybeSingle();
   requireNoError("Não foi possível atualizar acesso da coordenação", error);
   if (!data) throw new SupabaseDataError("Conta de coordenação operacional não encontrada.");

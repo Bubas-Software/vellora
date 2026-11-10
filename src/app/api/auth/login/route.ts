@@ -56,24 +56,42 @@ export async function POST(req: NextRequest) {
       const response = NextResponse.json({
         ok: true,
         role: result.session.role,
-        redirect: roleHomePath(result.session.role),
+        availableRoles: result.session.availableRoles,
+        needsRoleSelection: result.session.roleSelectionRequired === true,
+        redirect: result.session.roleSelectionRequired
+          ? "/selecionar-perfil"
+          : roleHomePath(result.session.role),
       });
       return applySupabaseCookieState(response, state);
     }
 
-    const { getUserByEmail } = await import("@/lib/data");
+    const { getUserByEmail, listUserRoles } = await import("@/lib/data");
     const user = await getUserByEmail(email);
     if (!user || !verifyPassword(password, user.password_hash)) {
       return NextResponse.json({ error: "E-mail ou senha inválidos." }, { status: 401 });
     }
 
+    const availableRoles = await listUserRoles(user.id);
+    if (!availableRoles.length) {
+      return NextResponse.json({ error: "Esta conta não tem um perfil de acesso ativo." }, { status: 403 });
+    }
+    const selectedRole = availableRoles.includes(user.role) ? user.role : availableRoles[0];
+    const needsRoleSelection = availableRoles.length > 1;
+
     const token = await createSessionToken({
       userId: user.id,
       name: user.name,
-      role: user.role,
+      role: selectedRole,
       sessionVersion: user.session_version,
+      profileSelected: !needsRoleSelection,
     });
-    const res = NextResponse.json({ ok: true, role: user.role, redirect: roleHomePath(user.role) });
+    const res = NextResponse.json({
+      ok: true,
+      role: selectedRole,
+      availableRoles,
+      needsRoleSelection,
+      redirect: needsRoleSelection ? "/selecionar-perfil" : roleHomePath(selectedRole),
+    });
     res.cookies.set(SESSION_COOKIE_NAME, token, {
       httpOnly: true,
       secure: req.nextUrl.protocol === "https:",

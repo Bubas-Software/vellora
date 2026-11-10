@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { mapSupabaseSession, type SupabaseProfile } from "./roles";
+import { getSupabaseRoleContextFromClient } from "./auth";
 
 /**
  * Proxy-only session lookup. getClaims() verifies the token and supplies only
@@ -23,5 +24,7 @@ export async function getSupabaseProxySession(
     .maybeSingle();
 
   if (profileError) return null;
-  return mapSupabaseSession({ id: subject }, profile as SupabaseProfile | null);
+  const roleContext = await getSupabaseRoleContextFromClient(client);
+  if (!roleContext) return null;
+  return mapSupabaseSession({ id: subject }, profile as SupabaseProfile | null, roleContext);
 }

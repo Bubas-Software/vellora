@@ -7,7 +7,13 @@ import {
   createSupabaseStatelessClient,
   type SupabaseCookieState,
 } from "./server";
-import { mapSupabaseSession, type SupabaseAuthUser, type SupabaseProfile } from "./roles";
+import {
+  mapSupabaseRole,
+  mapSupabaseSession,
+  type SupabaseAuthUser,
+  type SupabaseProfile,
+  type SupabaseRoleContext,
+} from "./roles";
 import type { NextRequest } from "next/server";
 
 const SUPABASE_GLOBAL_SIGN_OUT_TIMEOUT_MS = 5_000;
@@ -32,6 +38,31 @@ export type SupabaseSignInResult = {
   error: Error | null;
 };
 
+export async function getSupabaseRoleContextFromClient(
+  client: SupabaseClient,
+): Promise<SupabaseRoleContext | null> {
+  const { data, error } = await client.rpc("get_my_profile_role_context");
+  if (error) {
+    console.error("[supabase-auth] Não foi possível consultar os perfis de acesso da sessão.", {
+      error: error.message,
+    });
+    return null;
+  }
+  const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+  if (!row) return null;
+  const rawRoles = Array.isArray(row.available_roles) ? row.available_roles : [];
+  const availableRoles = rawRoles
+    .map(mapSupabaseRole)
+    .filter((role): role is NonNullable<typeof role> => role !== null);
+  if (!availableRoles.length) return null;
+  const activeRole = mapSupabaseRole(row.active_role);
+  return {
+    availableRoles,
+    activeRole,
+    needsSelection: row.needs_selection === true,
+  };
+}
+
 export async function getSupabaseSessionFromClient(
   client: SupabaseClient,
 ): Promise<SessionPayload | null> {
@@ -55,7 +86,13 @@ export async function getSupabaseSessionFromClient(
     return null;
   }
 
-  return mapSupabaseSession(user as SupabaseAuthUser, profile as SupabaseProfile | null);
+  const roleContext = await getSupabaseRoleContextFromClient(client);
+  if (!roleContext) return null;
+  return mapSupabaseSession(
+    user as SupabaseAuthUser,
+    profile as SupabaseProfile | null,
+    roleContext,
+  );
 }
 
 export async function getSupabaseSession(): Promise<SessionPayload | null> {

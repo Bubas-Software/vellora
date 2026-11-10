@@ -78,6 +78,13 @@
       "when": 1794231524685,
       "tag": "0010_coordinator_operational_role",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1794323898282,
+      "tag": "0011_profile_role_memberships",
+      "breakpoints": true
     }
   ]
 }

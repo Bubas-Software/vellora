@@ -22,7 +22,8 @@ export default async function AdminAccessPage() {
           id: account.id,
           name: account.name,
           email: account.email,
-          active: account.deleted_at === null,
+          profileActive: account.deleted_at === null,
+          active: account.deleted_at === null && account.membership_active !== false,
         }))}
       />
     </div>

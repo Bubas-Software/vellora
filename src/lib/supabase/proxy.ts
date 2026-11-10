@@ -23,6 +23,13 @@ export async function proxySupabaseAuth(
     const client = createSupabaseRequestClient(request, state);
     const session = await getSupabaseProxySession(client);
     if (!session) return redirectToLogin(request, state);
+    if (session.roleSelectionRequired) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/selecionar-perfil";
+      url.search = "";
+      url.searchParams.set("next", request.nextUrl.pathname + request.nextUrl.search);
+      return applySupabaseCookieState(NextResponse.redirect(url), state);
+    }
 
     const roleAllowed = allowedRoles.includes(session.role)
       && !(session.role === "coordenador_operacional" && isAdminOnlyPath(request.nextUrl.pathname));

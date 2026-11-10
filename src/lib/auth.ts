@@ -12,6 +12,9 @@ export type SessionPayload = {
   name: string;
   role: Role;
   sessionVersion: number;
+  availableRoles?: Role[];
+  roleSelectionRequired?: boolean;
+  profileSelected?: boolean;
 };
 
 const SESSION_COOKIE = "vellora_session";
@@ -54,6 +57,7 @@ export async function verifySessionToken(token: string): Promise<SessionPayload 
         name: payload.name,
         role: payload.role,
         sessionVersion: payload.sessionVersion,
+        profileSelected: payload.profileSelected === true,
       };
     }
     return null;
@@ -73,21 +77,31 @@ export function getAuthProvider(): AuthProvider {
 }
 
 async function getLegacySession(): Promise<SessionPayload | null> {
-  const { queryOne } = await import("./db");
+  const { query, queryOne } = await import("./db");
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
   if (!token) return null;
   const payload = await verifySessionToken(token);
   if (!payload) return null;
 
-  const user = await queryOne<{ role: Role; session_version: number }>(
-    "SELECT role, session_version FROM users WHERE id = $1 AND deleted_at IS NULL",
+  const user = await queryOne<{ session_version: number }>(
+    "SELECT session_version FROM users WHERE id = $1 AND deleted_at IS NULL",
     [payload.userId]
   );
-  if (!user || user.role !== payload.role || user.session_version !== payload.sessionVersion) {
+  if (!user || user.session_version !== payload.sessionVersion) {
     return null;
   }
-  return payload;
+  const rows = await query<{ role: Role }>(
+    "SELECT role FROM user_role_memberships WHERE user_id = $1 AND active = 1 ORDER BY is_default DESC, role",
+    [payload.userId],
+  );
+  const availableRoles = rows.map((row) => row.role);
+  if (!availableRoles.includes(payload.role)) return null;
+  return {
+    ...payload,
+    availableRoles,
+    roleSelectionRequired: availableRoles.length > 1 && payload.profileSelected !== true,
+  };
 }
 
 export function roleHomePath(role: Role): string {

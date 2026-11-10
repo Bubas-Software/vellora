@@ -32,6 +32,7 @@ export type User = {
   session_version: number;
   deleted_at: string | null;
   created_at: string;
+  membership_active?: boolean;
 };
 
 export type Patient = {
@@ -395,6 +396,11 @@ export async function getUserByEmail(email: string): Promise<User | undefined> {
   return queryOne<User>("SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL", [email]);
 }
 
+export async function findUserByEmailIncludingInactive(email: string): Promise<User | undefined> {
+  if (shouldUseSupabaseData()) return supabaseData.findUserByEmailIncludingInactive(email);
+  return queryOne<User>("SELECT * FROM users WHERE lower(email) = lower($1)", [email.trim()]);
+}
+
 export async function getUserById(id: string): Promise<User | undefined> {
   if (shouldUseSupabaseData()) return supabaseData.getUserById(id);
   return queryOne<User>("SELECT * FROM users WHERE id = $1", [id]);
@@ -409,10 +415,50 @@ export async function getUsersByIds(ids: string[]): Promise<User[]> {
 
 export async function listUsersByRole(role: string, includeInactive = false): Promise<User[]> {
   if (shouldUseSupabaseData()) return supabaseData.listUsersByRole(role, includeInactive);
-  return query<User>(
-    `SELECT * FROM users WHERE role = $1 ${includeInactive ? "" : "AND deleted_at IS NULL"} ORDER BY name`,
+  const users = await query<User>(
+    `SELECT users.*, user_role_memberships.active AS membership_active
+     FROM users
+     INNER JOIN user_role_memberships ON user_role_memberships.user_id = users.id
+     WHERE user_role_memberships.role = $1
+       ${includeInactive ? "" : "AND user_role_memberships.active = 1 AND users.deleted_at IS NULL"}
+     ORDER BY users.name`,
     [role],
   );
+  return users.map((user) => ({ ...user, membership_active: Boolean(user.membership_active) }));
+}
+
+export async function listUserRoles(userId: string): Promise<User["role"][]> {
+  if (shouldUseSupabaseData()) return supabaseData.listUserRoles(userId);
+  const rows = await query<{ role: User["role"] }>(
+    "SELECT role FROM user_role_memberships WHERE user_id = $1 AND active = 1 ORDER BY is_default DESC, role",
+    [userId],
+  );
+  return rows.map((row) => row.role);
+}
+
+export async function grantCoordinatorRole(userId: string, grantedBy: string): Promise<void> {
+  if (shouldUseSupabaseData()) return supabaseData.grantCoordinatorRole(userId, grantedBy);
+  const user = await getUserById(userId);
+  if (!user) throw new Error("Conta não encontrada.");
+  if (user.deleted_at) throw new Error("A conta está inativa. Reative a conta antes de adicionar outro acesso.");
+  const adminMembership = await queryOne<{ user_id: string }>(
+    "SELECT user_id FROM user_role_memberships WHERE user_id = $1 AND role = 'admin'",
+    [userId],
+  );
+  if (user.role === "admin" || adminMembership) {
+    throw new Error("O acesso de administrador não pode ser combinado com outros perfis.");
+  }
+  const updated = await query<{ user_id: string }>(
+    `INSERT INTO user_role_memberships (user_id, role, active, is_default, granted_by, updated_at)
+     VALUES ($1, 'coordenador_operacional', 1, 0, $2, CURRENT_TIMESTAMP)
+     ON CONFLICT (user_id, role) DO UPDATE SET
+       active = 1,
+       granted_by = excluded.granted_by,
+       updated_at = CURRENT_TIMESTAMP
+     RETURNING user_id`,
+    [userId, grantedBy],
+  );
+  if (!updated.length) throw new Error("Não foi possível salvar o perfil de coordenação.");
 }
 
 export async function createUser(input: {
@@ -433,13 +479,20 @@ export async function createUser(input: {
 
 export async function setCoordinatorAccountActive(id: string, active: boolean): Promise<void> {
   if (shouldUseSupabaseData()) return supabaseData.setCoordinatorAccountActive(id, active);
-  await query(
-    `UPDATE users
-     SET deleted_at = ${active ? "NULL" : "CURRENT_TIMESTAMP"},
-         session_version = session_version + 1
-     WHERE id = $1 AND role = 'coordenador_operacional'`,
-    [id],
+  if (active) {
+    const user = await getUserById(id);
+    if (!user || user.deleted_at) {
+      throw new Error("A conta está inativa globalmente. Reative a conta antes de reativar este perfil.");
+    }
+  }
+  const updated = await query<{ user_id: string }>(
+    `UPDATE user_role_memberships
+     SET active = $2, updated_at = CURRENT_TIMESTAMP
+     WHERE user_id = $1 AND role = 'coordenador_operacional'
+     RETURNING user_id`,
+    [id, active ? 1 : 0],
   );
+  if (!updated.length) throw new Error("Conta de coordenação não encontrada.");
 }
 
 export async function createManualCaregiver(input: {
