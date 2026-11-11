@@ -5,6 +5,7 @@ import { useEffect, useId, useRef, useState, type ChangeEvent, type FormEvent } 
 import { useRouter } from "next/navigation";
 import type { ContractDocument, ContractOwnerType } from "@/lib/data";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { reportClientMonitoringEvent } from "@/lib/monitoring-client";
 
 const DIRECT_UPLOAD_MAX_BYTES = 10_000_000;
 const LEGACY_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
@@ -204,6 +205,7 @@ export function ContractManager({
           setProgress(bytesTotal > 0 ? Math.min(99, Math.round((bytesSent / bytesTotal) * 100)) : 0);
         },
         onError: () => {
+          reportClientMonitoringEvent("SUPABASE_SERVICE_ERROR", "TusUploadError", "/admin");
           finish(() => reject(new Error("Não foi possível enviar o contrato.")));
         },
         onSuccess: () => {
@@ -215,6 +217,7 @@ export function ContractManager({
       try {
         upload.start();
       } catch {
+        reportClientMonitoringEvent("SUPABASE_SERVICE_ERROR", "TusUploadStartError", "/admin");
         finish(() => reject(new Error("Não foi possível iniciar o envio do contrato.")));
       }
     });
