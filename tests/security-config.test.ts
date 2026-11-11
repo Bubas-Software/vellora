@@ -19,14 +19,18 @@ describe("configuração do ticket SEC-DEPEND-HEADERS-CI", () => {
       packages?: Record<string, { version?: string }>;
     };
 
+    const patchedNextVersion = "16.4.6";
+    const patchedSharpVersion = "0.35.5";
+
     expect(packageJson.dependencies).toMatchObject({
-      next: "16.3.8",
-      sharp: "0.35.4",
+      next: patchedNextVersion,
+      sharp: patchedSharpVersion,
     });
-    expect(packageJson.devDependencies?.["eslint-config-next"]).toBe("16.3.8");
-    expect(packageLock.packages?.["node_modules/next"]?.version).toBe("16.3.8");
-    expect(packageLock.packages?.["node_modules/sharp"]?.version).toBe("0.35.4");
-    expect(packageLock.packages?.["node_modules/eslint-config-next"]?.version).toBe("16.3.8");
+    expect(packageJson.devDependencies?.["eslint-config-next"]).toBe(patchedNextVersion);
+    expect(packageLock.packages?.["node_modules/next"]?.version).toBe(patchedNextVersion);
+    expect(packageLock.packages?.["node_modules/sharp"]?.version).toBe(patchedSharpVersion);
+    expect(packageLock.packages?.["node_modules/eslint-config-next"]?.version).toBe(patchedNextVersion);
+    expect(packageLock.packages?.["node_modules/source-map-js"]?.version).toBe("1.2.2");
   });
 
   it("publica os headers defensivos e uma CSP compatível com os serviços usados", async () => {
