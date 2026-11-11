@@ -62,7 +62,10 @@ describe("upload direto de contratos", () => {
     const signed = await createContractUploadTicket(ticket);
     await expect(verifyContractUploadTicket(signed)).resolves.toEqual(ticket);
 
-    const tampered = `${signed.slice(0, -1)}${signed.endsWith("a") ? "b" : "a"}`;
+    const signatureSeparator = signed.lastIndexOf(".");
+    const signature = signed.slice(signatureSeparator + 1);
+    const changedSignature = `${signature[0] === "A" ? "B" : "A"}${signature.slice(1)}`;
+    const tampered = `${signed.slice(0, signatureSeparator + 1)}${changedSignature}`;
     await expect(verifyContractUploadTicket(tampered)).resolves.toBeNull();
   });
 });

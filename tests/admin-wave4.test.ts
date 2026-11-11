@@ -101,7 +101,7 @@ describe("Wave 4 administrativa — contratos de fonte", () => {
     it("liga o card do registro aos controles de editar e excluir", () => {
       expect(patientDetail).toContain("editHref={`/admin/pacientes/${patient.id}/registros/${r.id}`}");
       expect(patientDetail).toContain(
-        "deleteEndpoint={`/api/admin/patients/${patient.id}/records/${r.id}`}"
+        "deleteEndpoint={isAdmin ? `/api/admin/patients/${patient.id}/records/${r.id}` : undefined}"
       );
       expect(recordEditPage).toContain("<DailyRecordForm");
       expect(recordEditPage).toContain("/api/admin/patients/${patient.id}/records/${record.id}");

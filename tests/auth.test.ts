@@ -38,6 +38,14 @@ describe("fundação do provider de autenticação", () => {
       }),
     };
     const getUser = vi.fn();
+    const rpc = vi.fn().mockResolvedValue({
+      data: {
+        available_roles: ["familia"],
+        active_role: "familia",
+        needs_selection: false,
+      },
+      error: null,
+    });
     const client = {
       auth: {
         getClaims: vi.fn().mockResolvedValue({
@@ -47,6 +55,7 @@ describe("fundação do provider de autenticação", () => {
         getUser,
       },
       from: vi.fn().mockReturnValue(query),
+      rpc,
     } as never;
 
     await expect(getSupabaseProxySession(client)).resolves.toMatchObject({
@@ -55,6 +64,7 @@ describe("fundação do provider de autenticação", () => {
       role: "familia",
     });
     expect(getUser).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledWith("get_my_profile_role_context");
     expect(query.eq).toHaveBeenNthCalledWith(1, "id", "verified-sub");
     expect(query.eq).toHaveBeenNthCalledWith(2, "active", true);
   });
