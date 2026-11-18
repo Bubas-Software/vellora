@@ -726,7 +726,11 @@ export async function updatePatient(id: string, fields: Partial<Patient>): Promi
   if (sets.length === 0) return;
   values.push(id);
   await query(`UPDATE patients SET ${sets.join(", ")} WHERE id = $${i}`, values);
-  if ("family_user_id" in fields) await syncLegacyCaregiverPayrollForPatient(id, brazilToday());
+  if ("family_user_id" in fields) {
+    await syncLegacyCaregiverPayrollForPatient(id, brazilToday(), fields.status === "inativo");
+  } else if (fields.status === "inativo") {
+    await syncLegacyCaregiverPayrollForPatient(id, brazilToday(), true);
+  }
 }
 
 export async function deletePatient(id: string): Promise<void> {
@@ -820,10 +824,16 @@ export async function createAssignment(input: { patient_id: string; caregiver_us
 
 export async function deactivateAssignment(id: string): Promise<void> {
   if (shouldUseSupabaseData()) return supabaseData.deactivateAssignment(id);
+  const today = brazilToday();
   await query(
-    "UPDATE caregiver_assignments SET active = 0, end_date = strftime('%Y-%m-%d','now') WHERE id = $1",
-    [id]
+    "UPDATE caregiver_assignments SET active = 0, end_date = $2 WHERE id = $1",
+    [id, today]
   );
+  const futureEntries = await query<{ id: string }>(
+    "SELECT id FROM caregiver_schedule_entries WHERE caregiver_assignment_id = $1 AND scheduled_date > $2",
+    [id, today],
+  );
+  await syncLegacyCaregiverPayroll(futureEntries.map((entry) => entry.id));
 }
 
 export async function isCaregiverAssignedToPatient(caregiverUserId: string, patientId: string): Promise<boolean> {
@@ -850,9 +860,13 @@ export async function listCaregiverScheduleEntriesForPatient(
             s.profession, s.payroll_amount_override_cents, s.payroll_rate_status, s.created_at, s.updated_at
      FROM caregiver_schedule_entries s
      JOIN caregiver_assignments a ON a.id = s.caregiver_assignment_id
+     JOIN patients p ON p.id = a.patient_id
      WHERE a.patient_id = $1 AND s.scheduled_date >= $2 AND s.scheduled_date < $3
+       AND (s.scheduled_date <= $4
+         OR (a.active = 1 AND (a.end_date IS NULL OR s.scheduled_date <= a.end_date)))
+       AND (p.status <> 'inativo' OR s.scheduled_date <= $4)
      ORDER BY s.scheduled_date, s.start_time, s.id`,
-    [patientId, startDate, endDateExclusive],
+    [patientId, startDate, endDateExclusive, brazilToday()],
   );
 }
 
@@ -870,10 +884,14 @@ export async function listCaregiverScheduleEntriesForCaregiver(
             s.profession, s.payroll_amount_override_cents, s.payroll_rate_status, s.created_at, s.updated_at
      FROM caregiver_schedule_entries s
      JOIN caregiver_assignments a ON a.id = s.caregiver_assignment_id
-     WHERE a.caregiver_user_id = $1 AND a.active = 1
+     JOIN patients p ON p.id = a.patient_id
+     WHERE a.caregiver_user_id = $1
        AND s.scheduled_date >= $2 AND s.scheduled_date < $3
+       AND (s.scheduled_date <= $4
+         OR (a.active = 1 AND (a.end_date IS NULL OR s.scheduled_date <= a.end_date)))
+       AND (p.status <> 'inativo' OR s.scheduled_date <= $4)
      ORDER BY s.scheduled_date, s.start_time, s.id`,
-    [caregiverUserId, startDate, endDateExclusive],
+    [caregiverUserId, startDate, endDateExclusive, brazilToday()],
   );
 }
 
@@ -891,10 +909,14 @@ export async function listCaregiverScheduleEntriesForProfessional(
             s.profession, s.payroll_amount_override_cents, s.payroll_rate_status, s.created_at, s.updated_at
      FROM caregiver_schedule_entries s
      JOIN caregiver_assignments a ON a.id = s.caregiver_assignment_id
+     JOIN patients p ON p.id = a.patient_id
      WHERE a.caregiver_user_id = $1
        AND s.scheduled_date >= $2 AND s.scheduled_date < $3
+       AND (s.scheduled_date <= $4
+         OR (a.active = 1 AND (a.end_date IS NULL OR s.scheduled_date <= a.end_date)))
+       AND (p.status <> 'inativo' OR s.scheduled_date <= $4)
      ORDER BY s.scheduled_date, s.start_time, s.id`,
-    [caregiverUserId, startDate, endDateExclusive],
+    [caregiverUserId, startDate, endDateExclusive, brazilToday()],
   );
 }
 
@@ -1032,13 +1054,25 @@ async function syncLegacyCaregiverPayroll(scheduleIds: string[]): Promise<void> 
     caregiver_user_id: string;
     caregiver_name: string | null;
     patient_name: string | null;
+    cancelled: number;
     created_by: string | null;
     amount_cents: number | null;
   }>(
     `SELECT entry.id, entry.scheduled_date, entry.profession,
             assignment.caregiver_user_id, caregiver.name AS caregiver_name,
             patient.name AS patient_name, entry.created_by,
-            coalesce(entry.payroll_amount_override_cents, (SELECT rate.amount_cents
+            CASE WHEN
+              entry.scheduled_date > $${scheduleIds.length + 1}
+              AND (assignment.active = 0
+                OR (assignment.end_date IS NOT NULL AND entry.scheduled_date > assignment.end_date)
+                OR patient.status = 'inativo')
+            THEN 1 ELSE 0 END AS cancelled,
+            CASE WHEN
+              entry.scheduled_date > $${scheduleIds.length + 1}
+              AND (assignment.active = 0
+                OR (assignment.end_date IS NOT NULL AND entry.scheduled_date > assignment.end_date)
+                OR patient.status = 'inativo')
+            THEN NULL ELSE coalesce(entry.payroll_amount_override_cents, (SELECT rate.amount_cents
              FROM family_patient_service_rates AS rate
              JOIN patients AS patient ON patient.id = rate.patient_id
              WHERE rate.patient_id = assignment.patient_id
@@ -1046,13 +1080,13 @@ async function syncLegacyCaregiverPayroll(scheduleIds: string[]): Promise<void> 
                AND rate.profession = entry.profession
                AND entry.scheduled_date >= rate.valid_from
                AND (rate.valid_to IS NULL OR entry.scheduled_date <= rate.valid_to)
-             ORDER BY rate.valid_from DESC LIMIT 1)) AS amount_cents
+             ORDER BY rate.valid_from DESC LIMIT 1)) END AS amount_cents
      FROM caregiver_schedule_entries AS entry
      JOIN caregiver_assignments AS assignment ON assignment.id = entry.caregiver_assignment_id
      JOIN patients AS patient ON patient.id = assignment.patient_id
      LEFT JOIN caregiver_profiles AS caregiver ON caregiver.user_id = assignment.caregiver_user_id
      WHERE entry.id IN (${placeholders})`,
-    scheduleIds,
+    [...scheduleIds, brazilToday()],
   );
 
   const commands: Array<{ text: string; params: unknown[] }> = [];
@@ -1067,7 +1101,22 @@ async function syncLegacyCaregiverPayroll(scheduleIds: string[]): Promise<void> 
       : null;
     const caregiverName = entry.caregiver_name || "Profissional";
     const description = `Plantão — ${caregiverName} · ${entry.patient_name || "Paciente"}`;
-    if (amountCents) {
+    if (entry.cancelled) {
+      commands.push({
+        text: `DELETE FROM finance_expenses
+               WHERE caregiver_schedule_entry_id = $1 AND paid_on IS NULL
+                 AND caregiver_payroll_amount_overridden = 0`,
+        params: [entry.id],
+      });
+      commands.push({
+        text: `UPDATE caregiver_schedule_entries
+               SET payroll_rate_status = CASE WHEN EXISTS (
+                 SELECT 1 FROM finance_expenses WHERE caregiver_schedule_entry_id = $1
+               ) THEN 'gerado' ELSE 'valor_pendente' END
+               WHERE id = $1`,
+        params: [entry.id],
+      });
+    } else if (amountCents) {
       commands.push({
         text: "UPDATE caregiver_schedule_entries SET payroll_rate_status = 'gerado' WHERE id = $1",
         params: [entry.id],
@@ -1121,12 +1170,16 @@ async function syncLegacyCaregiverPayroll(scheduleIds: string[]): Promise<void> 
   await flushCommands();
 }
 
-async function syncLegacyCaregiverPayrollForPatient(patientId: string, fromDate: string): Promise<void> {
+async function syncLegacyCaregiverPayrollForPatient(
+  patientId: string,
+  fromDate: string,
+  futureOnly = false,
+): Promise<void> {
   const entries = await query<{ id: string }>(
     `SELECT entry.id
      FROM caregiver_schedule_entries AS entry
      JOIN caregiver_assignments AS assignment ON assignment.id = entry.caregiver_assignment_id
-     WHERE assignment.patient_id = $1 AND entry.scheduled_date >= $2`,
+     WHERE assignment.patient_id = $1 AND entry.scheduled_date ${futureOnly ? ">" : ">="} $2`,
     [patientId, fromDate],
   );
   await syncLegacyCaregiverPayroll(entries.map((entry) => entry.id));
@@ -2020,8 +2073,20 @@ export async function getFinanceDashboardSnapshot(month: string): Promise<Financ
          ON assignment.id = entry.caregiver_assignment_id
        LEFT JOIN patients AS patient ON patient.id = assignment.patient_id
        WHERE expense.expense_date >= $1 AND expense.expense_date < $2
+         AND (
+           expense.caregiver_schedule_entry_id IS NULL
+           OR entry.id IS NULL
+           OR expense.paid_on IS NOT NULL
+           OR expense.caregiver_payroll_amount_overridden = 1
+           OR entry.scheduled_date <= $3
+           OR (
+             assignment.active = 1
+             AND (assignment.end_date IS NULL OR entry.scheduled_date <= assignment.end_date)
+             AND patient.status <> 'inativo'
+           )
+         )
        ORDER BY expense.expense_date DESC, expense.created_at DESC`,
-      [monthStart, monthEnd],
+      [monthStart, monthEnd, brazilToday()],
     ),
     query<FinanceReceiptMovement>(
       "SELECT received_on, amount_cents FROM finance_receipts WHERE received_on >= $1 AND received_on < $2",
