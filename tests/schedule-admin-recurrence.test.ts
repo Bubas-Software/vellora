@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  getPatient: vi.fn(),
   getCaregiverProfileByUserId: vi.fn(),
   listAssignmentsForPatient: vi.fn(),
   listCaregiverScheduleEntriesForProfessional: vi.fn(),
 }));
 
 vi.mock("@/lib/data", () => ({
+  getPatient: mocks.getPatient,
   getCaregiverProfileByUserId: mocks.getCaregiverProfileByUserId,
   listAssignmentsForPatient: mocks.listAssignmentsForPatient,
   listCaregiverScheduleEntriesForProfessional: mocks.listCaregiverScheduleEntriesForProfessional,
@@ -36,6 +38,7 @@ function body(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.getPatient.mockResolvedValue({ status: "ativo" });
   mocks.getCaregiverProfileByUserId.mockResolvedValue({ account_status: "ativo", profession: "enfermeiro" });
   mocks.listAssignmentsForPatient.mockResolvedValue([{
     id: "33333333-3333-4333-8333-333333333333",
@@ -66,6 +69,17 @@ describe("recorrência de escalas", () => {
   it("rejeita datas sem ocorrência válida e horários incorretos", () => {
     expect(parseRecurringScheduleMutation(body({ pattern: "invalid" })).error).toContain("padrão");
     expect(parseRecurringScheduleMutation(body({ start_time: "20:00", end_time: "08:00" })).error).toContain("posterior");
+  });
+
+  it("rejeita recorrências para pacientes inativos", async () => {
+    mocks.getPatient.mockResolvedValue({ status: "inativo" });
+    const parsed = parseRecurringScheduleMutation(body());
+    if (!parsed.data) throw new Error(parsed.error);
+
+    await expect(resolveRecurringScheduleMutation(parsed.data)).resolves.toMatchObject({
+      error: expect.stringContaining("paciente inativo"),
+    });
+    expect(mocks.listAssignmentsForPatient).not.toHaveBeenCalled();
   });
 
   it("associa cada data ao vínculo ativo correspondente", async () => {
