@@ -240,6 +240,17 @@ function asBoolean(value: unknown): boolean {
   return value === true || value === 1 || value === "1" || value === "true";
 }
 
+function brazilToday(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 function asStringArray(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value.filter((item): item is string => typeof item === "string");
@@ -1284,6 +1295,15 @@ async function scheduleRowsForAssignments(
   if (!assignments.length) return [];
   const client = await requestClient();
   const assignmentById = new Map(assignments.map((assignment) => [assignment.id, assignment]));
+  const patientIds = [...new Set(assignments.map((assignment) => assignment.patient_id))];
+  const { data: patientRows, error: patientError } = await client
+    .from("patients")
+    .select("id,status")
+    .in("id", patientIds);
+  requireNoError("Não foi possível consultar a situação dos pacientes das escalas Supabase", patientError);
+  const patientStatusById = new Map(
+    ((patientRows || []) as SupabaseRow[]).map((patient) => [asString(patient.id), asString(patient.status)]),
+  );
   const { data, error } = await client
     .from("caregiver_schedule_entries")
     .select(SCHEDULE_SAFE_COLUMNS)
@@ -1294,10 +1314,20 @@ async function scheduleRowsForAssignments(
     .order("start_time");
   requireNoError("Não foi possível consultar escalas Supabase", error);
   const rows = await includeSchedulePayrollDetails(client, (data || []) as SupabaseRow[]);
+  const today = brazilToday();
   return rows.flatMap((row) => {
     const assignmentId = asString(row.caregiver_assignment_id);
     const assignment = assignmentById.get(assignmentId);
-    return assignment ? [mapCaregiverScheduleEntry(row, assignment)] : [];
+    if (!assignment) return [];
+
+    const scheduledDate = asString(row.scheduled_date);
+    const assignmentDateAllowed = scheduledDate <= today
+      || (assignment.active === 1 && (!assignment.end_date || scheduledDate <= assignment.end_date));
+    if (!assignmentDateAllowed) return [];
+
+    const patientStatus = patientStatusById.get(assignment.patient_id);
+    if (scheduledDate > today && patientStatus !== "ativo") return [];
+    return [mapCaregiverScheduleEntry(row, assignment)];
   });
 }
 
@@ -1320,8 +1350,7 @@ export async function listCaregiverScheduleEntriesForCaregiver(
   const { data, error } = await client
     .from("caregiver_assignments")
     .select("*")
-    .eq("caregiver_user_id", userId)
-    .eq("active", true);
+    .eq("caregiver_user_id", userId);
   requireNoError("Não foi possível consultar vínculos do profissional Supabase", error);
   return scheduleRowsForAssignments(((data || []) as SupabaseRow[]).map(mapAssignment), startDate, endDateExclusive);
 }
@@ -2451,20 +2480,47 @@ export async function getFinanceDashboardSnapshot(month: string): Promise<Financ
       .map((row) => asNullableString(row.caregiver_schedule_entry_id))
       .filter((id): id is string => Boolean(id)),
   )];
-  const patientNameByScheduleEntryId = new Map<string, string>();
+  const scheduleDetailsById = new Map<string, {
+    patientName: string | null;
+    patientStatus: string | null;
+    scheduledDate: string;
+    assignmentActive: boolean;
+    assignmentEndDate: string | null;
+  }>();
   if (scheduleEntryIds.length > 0) {
     const { data: scheduleRows, error: scheduleError } = await client
       .from("caregiver_schedule_entries")
-      .select("id,assignment:caregiver_assignments!caregiver_schedule_entries_caregiver_assignment_id_fkey(patient:patients!caregiver_assignments_patient_id_fkey(name))")
+      .select("id,scheduled_date,assignment:caregiver_assignments!caregiver_schedule_entries_caregiver_assignment_id_fkey(active,end_date,patient:patients!caregiver_assignments_patient_id_fkey(name,status))")
       .in("id", scheduleEntryIds);
     requireNoError("Não foi possível consultar os pacientes dos plantões Supabase", scheduleError);
     for (const scheduleRow of (scheduleRows || []) as SupabaseRow[]) {
       const assignment = scheduleRow.assignment as SupabaseRow | null;
       const patient = assignment?.patient as SupabaseRow | null;
-      const patientName = asNullableString(patient?.name);
-      if (patientName) patientNameByScheduleEntryId.set(asString(scheduleRow.id), patientName);
+      scheduleDetailsById.set(asString(scheduleRow.id), {
+        patientName: asNullableString(patient?.name),
+        patientStatus: asNullableString(patient?.status),
+        scheduledDate: asString(scheduleRow.scheduled_date),
+        assignmentActive: asBoolean(assignment?.active),
+        assignmentEndDate: asNullableString(assignment?.end_date),
+      });
     }
   }
+  const today = brazilToday();
+  const visibleExpenseRows = expenseRows.filter((row) => {
+    const scheduleEntryId = asNullableString(row.caregiver_schedule_entry_id);
+    if (
+      !scheduleEntryId
+      || asNullableString(row.paid_on)
+      || asBoolean(row.caregiver_payroll_amount_overridden)
+    ) return true;
+
+    const details = scheduleDetailsById.get(scheduleEntryId);
+    if (!details) return true;
+    const assignmentDateAllowed = details.scheduledDate <= today
+      || (details.assignmentActive && (!details.assignmentEndDate || details.scheduledDate <= details.assignmentEndDate));
+    const patientDateAllowed = details.patientStatus === "ativo" || details.scheduledDate <= today;
+    return assignmentDateAllowed && patientDateAllowed;
+  });
   const receiptTotals = new Map<string, number>();
   if (chargeRows.length > 0) {
     const chargeIds = chargeRows.map((row) => assertUuid(asString(row.id), "Cobrança"));
@@ -2500,9 +2556,9 @@ export async function getFinanceDashboardSnapshot(month: string): Promise<Financ
     charges: chargeRows.map((row) =>
       mapFinanceCharge(row, receiptTotals.get(asString(row.id)) || 0),
     ),
-    expenses: expenseRows.map((row) => {
+    expenses: visibleExpenseRows.map((row) => {
       const scheduleEntryId = asNullableString(row.caregiver_schedule_entry_id);
-      const patientName = scheduleEntryId ? patientNameByScheduleEntryId.get(scheduleEntryId) || null : null;
+      const patientName = scheduleEntryId ? scheduleDetailsById.get(scheduleEntryId)?.patientName || null : null;
       return mapFinanceExpense(row, patientName);
     }),
     cash_flow: buildFinanceCashFlow(month, receipts, payments),

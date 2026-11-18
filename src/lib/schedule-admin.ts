@@ -1,5 +1,6 @@
 import type { CaregiverScheduleEntry, CaregiverScheduleEntryInput } from "./data";
 import {
+  getPatient,
   getCaregiverProfileByUserId,
   listAssignmentsForPatient,
   type Assignment,
@@ -16,6 +17,17 @@ import { listCaregiverScheduleEntriesForProfessional } from "./data";
 import { generateScheduleRecurrence } from "./schedule-recurrence";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function brazilToday(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
 
 export type ScheduleMutation = {
   patient_id: string;
@@ -174,6 +186,12 @@ export async function resolveScheduleMutation(
   mutation: ScheduleMutation,
   existing?: CaregiverScheduleEntry,
 ): Promise<{ data?: CaregiverScheduleEntryInput; error?: string; conflict?: boolean }> {
+  const patient = await getPatient(mutation.patient_id);
+  if (!patient) return { error: "Paciente não encontrado." };
+  if (patient.status === "inativo" && (!existing || mutation.scheduled_date > brazilToday())) {
+    return { error: "Não é possível incluir ou alterar plantões futuros para um paciente inativo." };
+  }
+
   const assignments = await listAssignmentsForPatient(mutation.patient_id);
   const assignment = assignments.find((candidate) =>
     candidate.caregiver_user_id === mutation.caregiver_user_id
@@ -228,6 +246,12 @@ export async function resolveScheduleMutation(
 export async function resolveRecurringScheduleMutation(
   mutation: RecurringScheduleMutation,
 ): Promise<{ data?: CaregiverScheduleEntryInput[]; error?: string; conflict?: boolean }> {
+  const patient = await getPatient(mutation.patient_id);
+  if (!patient) return { error: "Paciente não encontrado." };
+  if (patient.status === "inativo") {
+    return { error: "Não é possível criar recorrências para um paciente inativo." };
+  }
+
   const assignments = await listAssignmentsForPatient(mutation.patient_id);
   const professionalAssignments = assignments.filter((assignment) =>
     assignment.caregiver_user_id === mutation.caregiver_user_id && assignment.active === 1,
